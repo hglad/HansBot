@@ -54,13 +54,17 @@ ydl_opts = {
     }],
     'logger': logger,
     'progress_hooks': [my_hook],
-    'outtmpl': 'audio_files/%(title)s.%(ext)s',
+    'outtmpl': 'audio_files/%(title)s-%(id)s.%(ext)s',
 }
 
 ffmpeg_opts = {
         'options': '-vn',
-        'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5'
+        'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 60'
     }
+
+
+def end_song(path):
+    os.remove(path)
 
 
 class HansBot(commands.Bot):
@@ -88,7 +92,6 @@ class HansBot(commands.Bot):
 
                 await bot.change_presence(activity=idle_activity)
         else:
-            idle_activity = discord.Activity(type=discord.ActivityType.playing, name="nothing at the moment")
             await bot.change_presence(activity=idle_activity)
 
     @update_presence.before_loop
@@ -128,12 +131,21 @@ class HansBot(commands.Bot):
                 return
 
             try:
-                # Join voice channel and play the downloaded audio, indicate song title in the bot's activity
+                # Join voice channel and play the downloaded audio
                 channel = bot.get_channel(channel_id_user)
-                voice = await channel.connect(timeout=300)
+                if not self.voice_clients:
+                    voice = await channel.connect(timeout=300)
+                else:  # TODO check the guild that the message is sent from to ensure we get the correct voice client
+                    voice = self.voice_clients[0]
+
+                # TODO if download is True in ydl.extract_info(), this might be a more stable way to play the audio, but might be an issue with larger files
+                # song_path = str(song_info['title']) + "-" + str(song_info['id'] + ".mp3")
+                # voice.play(discord.FFmpegPCMAudio(song_path), after=lambda x: end_song(path))
+                # voice.source = discord.PCMVolumeTransformer(voice.source, 1)
 
                 self.current_song_title = song_info["title"]
                 voice.play(audio)
+
 
             except BaseException as e:
                 logger.exception(f"Failed joining channel and/or playing audio: {e}")
