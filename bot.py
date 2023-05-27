@@ -4,8 +4,10 @@ import logging
 import aiohttp
 import discord
 import youtube_dl
+import threading
 
 from discord.ext import commands, tasks
+
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -58,8 +60,8 @@ ydl_opts = {
 }
 
 ffmpeg_opts = {
-        'options': '-vn',
-        'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 60'
+        'options': '-vn -http_persistent 0',
+        'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5'
     }
 
 
@@ -70,6 +72,7 @@ class HansBot(commands.Bot):
         self.queue = {}
         self.music_channels = {}
         # self.play_lock = asyncio.Lock()  # Prevent attempting to play the same song twice, leading to an exception
+        self.play_lock = threading.Lock()
 
     def remove_song_from_queue(self, guild_id, song):
         audio_id = song["id"]
@@ -95,9 +98,9 @@ class HansBot(commands.Bot):
         seconds = duration_seconds % 60
         return f"{minutes:>02}:{seconds:>02}"
 
-    async def setup_hook(self) -> None:
+    # async def setup_hook(self) -> None:
         # start the task to run in the background
-        self.play_queue.start()
+        # self.play_queue.start()
 
     @tasks.loop(seconds=5)
     async def play_queue(self):
@@ -109,18 +112,21 @@ class HansBot(commands.Bot):
                     voice_client = self.get_voice_client_for_channel(channel)
                     if not voice_client.is_playing():
                         audio_to_play = song["audio"]
-                        voice_client = self.get_voice_client_for_channel(channel)
                         title = song["title"]
-                        duration_fmt = self.seconds_to_mm_ss(song["duration"])
 
                         # Play the audio and post a helpful message
-                        self.current_song_title = title
                         music_channel = self.get_channel(song["music_channel_id"])
-                        msg = f"> ## **Now playing**\n" \
-                              f"> # {title} _({duration_fmt})_\n" \
-                              f"> _requested by {song['requested_by']}_\n" \
-                              f"> _Queue length: {len(guild_queue)-1}_"
+                        msg = f"> ## **Now playing:**\n"
+                        if song.get('duration'):
+                            duration_fmt = self.seconds_to_mm_ss(song["duration"])
+                            msg += f"> # {title} _({duration_fmt})_\n"
+                        else:
+                            msg += f"> # {title})\n"
 
+                        msg += f"> _requested by {song['requested_by']}_\n" \
+                               f"> _Queue length: {len(guild_queue)-1}_"
+
+                        self.current_song_title = title
                         await music_channel.send(msg)
                         voice_client.play(audio_to_play, after=self.remove_song_from_queue(guild_id, song))
 
@@ -157,13 +163,18 @@ class HansBot(commands.Bot):
     async def on_message(self, message):
         if message.author == self.user:
             return
-        
+
+        msg = message.content
+        if msg.startswith('!plæy'):  # TODO don't do this, make on_message into a command instead
+            pass
+        else:
+            await self.process_commands(message)
+
         guild_id = message.guild.id 
         if message.guild.id not in self.queue:
             self.queue[guild_id] = []
             
         voice_client = None
-        msg = message.content
 
         # Determine if this is a music channel
         channel_posted_in = message.channel
@@ -192,7 +203,7 @@ class HansBot(commands.Bot):
                     song_info = ydl.extract_info(url, download=False)
 
                 title = song_info['title']
-                duration = song_info['duration']
+                duration = song_info.get('duration')
                 audio_id = f"{title}-{song_info['id']}"
                 url_to_play = song_info["formats"][0]["url"]
 
@@ -235,7 +246,10 @@ class HansBot(commands.Bot):
                 msg = f"> Added **{title}** to the queue (number #{num_in_queue+1} in queue)"
                 music_channel = self.get_channel(music_channel_id)
                 await music_channel.send(msg)
-                await self.play_queue()
+                if self.play_queue.is_running() is False:
+                    self.play_queue.start()
+
+                # await self.play_queue()
 
             except BaseException as e:
                 logger.exception(f"Failed joining channel or playing audio: {e}")
@@ -266,6 +280,28 @@ class HansBot(commands.Bot):
         logger.info(f"{member} is typing in channel '{channel}'")
 
 
+bot = HansBot(command_prefix='!', intents=discord.Intents.all())
+
+
+@bot.command()
+async def skip(ctx):
+    # queue = bot.queue.get(msg_guild_id)
+    msg_guild_id = ctx.guild.id
+    voice_clients = bot.voice_clients
+
+    if ctx.author.voice:  # check if user is in the correct voice channel
+        channel_id_user = ctx.author.voice.channel.id
+    else:
+        return
+
+    if msg_guild_id in bot.music_channels:
+        for voice_client in voice_clients:
+            # If the guild (server) matches and the user is in the same voice channel as the bot, we stop
+            if msg_guild_id == voice_client.guild.id and channel_id_user == voice_client.channel.id:
+                voice_client.stop()
+
+# bot.add_command(skip)
+
 # @bot.command(pass_context=True)
 # async def join(ctx):
 #     try:
@@ -287,7 +323,6 @@ class HansBot(commands.Bot):
 # voice.source = discord.PCMVolumeTransformer(voice.source, 1)
 
 if __name__ == '__main__':
-    bot = HansBot(command_prefix='!H', intents=discord.Intents.all())
     bot.run(token, log_handler=handler, log_level=logging.INFO)
 
 
