@@ -150,6 +150,12 @@ class HansBot(commands.Bot):
             except BaseException as e:
                 logger.exception(f"Failed joining channel and/or playing audio: {e}")
 
+    async def on_voice_state_update(self, member, before, after):
+        # We should leave the voice channel if no-one else is in the channel
+        if self.voice_clients:
+            voice = self.voice_clients[0]
+            channel = voice.channel
+
     async def on_typing(self, channel, member, when):
         logger.info(f"{member} is typing in channel '{channel}'")
 
