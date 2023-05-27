@@ -68,10 +68,15 @@ class HansBot(commands.Bot):
         super().__init__(command_prefix=command_prefix, intents=intents, **options)
         self.current_song_title = None
         self.queue = {}
+        self.music_channels = {}
+        # self.play_lock = asyncio.Lock()  # Prevent attempting to play the same song twice, leading to an exception
 
     def remove_song_from_queue(self, guild_id, song):
+        audio_id = song["id"]
         if guild_id in self.queue:
-            self.queue[guild_id].remove(song)
+            for song in self.queue[guild_id]:
+                if song['id'] == audio_id:
+                    self.queue[guild_id].remove(song)
 
     def is_playing_in_channel(self, channel):
         for connected_voice in self.voice_clients:
@@ -85,6 +90,11 @@ class HansBot(commands.Bot):
                 return voice_client
         return None
 
+    def seconds_to_mm_ss(self, duration_seconds):
+        minutes = duration_seconds // 60
+        seconds = duration_seconds % 60
+        return f"{minutes:>02}:{seconds:>02}"
+
     async def setup_hook(self) -> None:
         # start the task to run in the background
         self.play_queue.start()
@@ -92,32 +102,49 @@ class HansBot(commands.Bot):
     @tasks.loop(seconds=5)
     async def play_queue(self):
         # Check if we should play something from the queue and update activity with the audio we are playing
-        # voice_clients = self.voice_clients
-        for guild_id, guild_queue in self.queue.items():
-            # sorted_guild_queue = sorted(list(self.queue[guild_id].values()), key=lambda _audio: _audio['position'])
-            for song in guild_queue:
-                channel = self.get_channel(song["voice_channel_id"])
-                playing_in_channel = self.is_playing_in_channel(channel)
-                if not playing_in_channel:
-                    audio_to_play = song["audio"]
+        try:
+            for guild_id, guild_queue in self.queue.items():
+                for song in guild_queue:
+                    channel = self.get_channel(song["voice_channel_id"])
                     voice_client = self.get_voice_client_for_channel(channel)
-                    self.current_song_title = song["title"]
-                    voice_client.play(audio_to_play, after=self.remove_song_from_queue(guild_id, song))
+                    if not voice_client.is_playing():
+                        audio_to_play = song["audio"]
+                        voice_client = self.get_voice_client_for_channel(channel)
+                        title = song["title"]
+                        duration_fmt = self.seconds_to_mm_ss(song["duration"])
 
-        idle_activity = discord.Activity(type=discord.ActivityType.playing, name="nothing at the moment")
-        if self.current_song_title:
-            voice_clients = self.voice_clients
-            if not voice_clients:
-                await bot.change_presence(activity=idle_activity)
+                        # Play the audio and post a helpful message
+                        self.current_song_title = title
+                        music_channel = self.get_channel(song["music_channel_id"])
+                        msg = f"> ## **Now playing**\n" \
+                              f"> # {title} _({duration_fmt})_\n" \
+                              f"> _requested by {song['requested_by']}_\n" \
+                              f"> _Queue length: {len(guild_queue)-1}_"
+
+                        await music_channel.send(msg)
+                        voice_client.play(audio_to_play, after=self.remove_song_from_queue(guild_id, song))
+
+        except BaseException as e:
+            logger.exception(f"Failed joining voice channel or playing audio: {e}")
+
+        try:
+            idle_activity = discord.Activity(type=discord.ActivityType.playing, name="nothing at the moment")
+            if self.current_song_title:
+                voice_clients = self.voice_clients
+                if not voice_clients:
+                    await bot.change_presence(activity=idle_activity)
+                else:
+                    for voice in voice_clients:
+                        if voice.is_playing():
+                            activity = discord.Activity(type=discord.ActivityType.playing, name=self.current_song_title)
+                            await bot.change_presence(activity=activity)
+                            return
+                    await bot.change_presence(activity=idle_activity)
             else:
-                for voice in voice_clients:
-                    if voice.is_playing():
-                        activity = discord.Activity(type=discord.ActivityType.playing, name=self.current_song_title)
-                        await bot.change_presence(activity=activity)
-                        return
                 await bot.change_presence(activity=idle_activity)
-        else:
-            await bot.change_presence(activity=idle_activity)
+
+        except BaseException as e:
+            logger.exception(f"Failed setting activity: {e}")
 
     @play_queue.before_loop
     async def before_my_task(self):
@@ -142,10 +169,14 @@ class HansBot(commands.Bot):
         channel_posted_in = message.channel
         if 'music' in channel_posted_in.topic.lower():
             music_channel_id = message.channel.id
+            self.music_channels[guild_id] = music_channel_id
         else:
             return
 
-        channel_id_user = message.author.voice.channel.id
+        if message.author.voice:  # check if user is in a voice channel
+            channel_id_user = message.author.voice.channel.id
+        else:
+            return
 
         if msg.startswith('!plæy') and music_channel_id:
             _split = msg.split()
@@ -160,7 +191,9 @@ class HansBot(commands.Bot):
                 with _ydl as ydl:
                     song_info = ydl.extract_info(url, download=False)
 
-                audio_id = f"{song_info['title']}-{song_info['id']}"
+                title = song_info['title']
+                duration = song_info['duration']
+                audio_id = f"{title}-{song_info['id']}"
                 url_to_play = song_info["formats"][0]["url"]
 
                 audio = discord.FFmpegPCMAudio(url_to_play, **ffmpeg_opts)
@@ -185,36 +218,24 @@ class HansBot(commands.Bot):
                 if not voice_client:
                     logger.error(f"Unable to fetch voice client.")
                     return
-
-                # TODO if download is True in ydl.extract_info(), this might be a more stable way to play the audio, but might be an issue with larger files
-                # song_path = str(song_info['title']) + "-" + str(song_info['id'] + ".mp3")
-                # voice.play(discord.FFmpegPCMAudio(song_path), after=lambda x: end_song(path))
-                # voice.source = discord.PCMVolumeTransformer(voice.source, 1)
                 
-                num_in_queue = len(self.queue[guild_id])  # logger.info(f"Added {'song_info["title"]}' to queue")
+                num_in_queue = len(self.queue[guild_id])
                 self.queue[guild_id].append({"url": url_to_play,
                                              "id": audio_id,
                                              "audio": audio,
                                              "voice_channel_id": channel_id_user,
-                                             "title": song_info["title"],
+                                             "music_channel_id": music_channel_id,
+                                             "title": title,
+                                             "duration": duration,
+                                             "requested_by": message.author,
                                              "position": num_in_queue})
+
+                logger.info(f"> Added '{title}' to queue")
+
+                msg = f"> Added **{title}** to the queue (number #{num_in_queue+1} in queue)"
+                music_channel = self.get_channel(music_channel_id)
+                await music_channel.send(msg)
                 await self.play_queue()
-                
-                # if voice_client.is_playing():
-                #     logger.info(f"Already playing audio, adding requested audio to queue...")
-                #     if audio_id and url_to_play:
-                #         position = len(self.queue)
-                #         # position = num_in_queue + 1
-                #         self.queue[guild_id][audio_id] = {"url": url_to_play,
-                #                                           "title": song_info["title"],
-                #                                           "position": position}
-                # else:
-                #     self.queue[guild_id][audio_id] = {"url": url_to_play,
-                #                                       "title": song_info["title"],
-                #                                       "position": 0}
-                #     
-                #     self.current_song_title = song_info["title"]
-                #     voice_client.play(audio, after=self.remove_song_from_queue(audio_id))
 
             except BaseException as e:
                 logger.exception(f"Failed joining channel or playing audio: {e}")
@@ -235,6 +256,10 @@ class HansBot(commands.Bot):
                     if len(users_in_channel) == 0:
                         logger.info(f"Disconnecting from channel '{channel_with_update.name}' since all "
                                     f"users have left.")
+                        guild_id = channel_with_update.guild.id
+                        music_channel_id = self.music_channels.get(guild_id)
+                        music_channel = self.get_channel(music_channel_id)
+                        await music_channel.send(f"> All users have left, disconnecting now.")
                         await connected_voice.disconnect()
 
     async def on_typing(self, channel, member, when):
@@ -256,7 +281,13 @@ class HansBot(commands.Bot):
 #         print(f'An error occurred while joining the voice channel: {e}')
 #
 
+# TODO if download is True in ydl.extract_info(), this might be a more stable way to play the audio, but might be an issue with larger files
+# song_path = str(song_info['title']) + "-" + str(song_info['id'] + ".mp3")
+# voice.play(discord.FFmpegPCMAudio(song_path), after=lambda x: end_song(path))
+# voice.source = discord.PCMVolumeTransformer(voice.source, 1)
+
 if __name__ == '__main__':
     bot = HansBot(command_prefix='!H', intents=discord.Intents.all())
     bot.run(token, log_handler=handler, log_level=logging.INFO)
+
 
