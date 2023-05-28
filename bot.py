@@ -106,6 +106,9 @@ class HansBot(commands.Bot):
                 if song['id'] == audio_id:
                     self.queue[guild_id].remove(song)
 
+    async def clear_queue(self, guild_id):
+        self.queue[guild_id] = []
+
     def is_playing_in_channel(self, channel):
         for connected_voice in self.voice_clients:
             if connected_voice.is_playing() and connected_voice.channel.id == channel.id:
@@ -119,9 +122,25 @@ class HansBot(commands.Bot):
                 return True
         return False
 
+    def get_user_voice_channel(self, message):
+        if message.author.voice:
+            voice_channel_user = message.author.voice.channel
+            if not voice_channel_user:
+                return None
+            else:
+                return voice_channel_user
+        else:
+            return None
+
     def get_voice_client_for_channel(self, channel):
         for voice_client in self.voice_clients:
             if voice_client.channel.id == channel.id:
+                return voice_client
+        return None
+
+    def get_voice_client_for_guild(self, guild):
+        for voice_client in self.voice_clients:
+            if voice_client.guild.id == guild.id:
                 return voice_client
         return None
 
@@ -353,21 +372,87 @@ async def skip(ctx):
 
 @bot.command()
 async def stop(ctx):
-    # TODO
-    # queue = bot.queue.get(msg_guild_id)
-    msg_guild_id = ctx.guild.id
-    voice_clients = bot.voice_clients
+    # Clear the queue and stop playing audio
+    guild_id = ctx.guild.id
+    user_voice_channel = bot.get_user_voice_channel(message=ctx)
+    is_playing = bot.is_playing_in_channel(user_voice_channel)
 
-    if ctx.author.voice:  # check if user is in the correct voice channel
-        channel_id_user = ctx.author.voice.channel.id
-    else:
+    music_channel_id = bot.music_channels.get(guild_id)
+    music_channel = bot.get_channel(music_channel_id)
+
+    if is_playing and bot.is_message_in_music_channel(message=ctx):
+        await bot.clear_queue(guild_id)
+        await skip(ctx)
+        msg = f"> Cleared queue and stopped playing music."
+        await music_channel.send(msg)
+
+
+@bot.command()
+async def pause(ctx):
+    user_is_in_voice = bot.is_user_in_correct_voice_channel(message=ctx)
+    msg_in_music_channel = bot.is_message_in_music_channel(message=ctx)
+
+    if not user_is_in_voice:
+        logger.info(f"User is not in the correct voice channel.")
         return
 
-    if msg_guild_id in bot.music_channels:
-        for voice_client in voice_clients:
-            # If the guild (server) matches and the user is in the same voice channel as the bot, we stop
-            if msg_guild_id == voice_client.guild.id and channel_id_user == voice_client.channel.id:
-                voice_client.stop()
+    if not msg_in_music_channel:
+        logger.info(f"Command was not posted in a music channel.")
+        return
+
+    music_channel_id = bot.music_channels.get(ctx.guild.id)
+    music_channel = bot.get_channel(music_channel_id)
+
+    voice_client = bot.get_voice_client_for_guild(ctx.guild)
+    if voice_client and voice_client.is_playing():
+        voice_client.pause()
+        msg = f"> Paused playback, use **!resume** to resume playback."
+        await music_channel.send(msg)
+    else:
+        logger.info(f"I'm not playing anything right now.")
+
+
+@bot.command()
+async def resume(ctx):
+    user_is_in_voice = bot.is_user_in_correct_voice_channel(message=ctx)
+    msg_in_music_channel = bot.is_message_in_music_channel(message=ctx)
+
+    if not user_is_in_voice:
+        logger.info(f"User is not in the correct voice channel.")
+        return
+
+    if not msg_in_music_channel:
+        logger.info(f"Command was not posted in a music channel.")
+        return
+
+    music_channel_id = bot.music_channels.get(ctx.guild.id)
+    music_channel = bot.get_channel(music_channel_id)
+
+    voice_client = bot.get_voice_client_for_guild(ctx.guild)
+    if voice_client and not voice_client.is_playing():
+        audio_source = voice_client.source
+        if audio_source:
+            voice_client.resume()
+            msg = f"> Resumed playback."
+            await music_channel.send(msg)
+        else:
+            msg = f"> There is nothing to play."
+            await music_channel.send(msg)
+    else:
+        msg = f"> I'm already playing something."
+        await music_channel.send(msg)
+
+
+@bot.command()
+async def disconnect(ctx):
+    # TODO
+    pass
+
+
+@bot.command()
+async def queue(ctx):
+    # TODO
+    pass
 
 
 # @bot.command(pass_context=True)
