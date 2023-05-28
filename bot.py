@@ -72,9 +72,33 @@ class HansBot(commands.Bot):
         self.queue = {}
         self.music_channels = {}
         # self.play_lock = asyncio.Lock()  # Prevent attempting to play the same song twice, leading to an exception
-        self.play_lock = threading.Lock()
+        # self.play_lock = threading.Lock()
 
-    def remove_song_from_queue(self, guild_id, song):
+    async def on_ready(self):
+        await self.change_presence(status=discord.Status.online)
+        for guild in self.guilds:
+            self.queue[guild.id] = []
+            for channel in guild.channels:
+                if isinstance(channel, discord.TextChannel) and channel.topic and 'music' in channel.topic.lower():
+                    self.music_channels[guild.id] = channel.id
+                    break
+
+        logger.info(f'Logged on as {bot.user}!')
+
+    async def add_song_to_queue(self, guild_id, song):
+        num_in_queue = len(self.queue[guild_id])
+        title = song['title']
+
+        self.queue[guild_id].append(song)
+        logger.info(f"> Added '{title}' to queue")
+        msg = f"> Added **{title}** to the queue (number #{num_in_queue + 1} in queue)"
+        music_channel = self.get_channel(song['music_channel_id'])
+        await music_channel.send(msg)
+
+        if self.play_queue.is_running() is False:
+            self.play_queue.start()
+
+    async def remove_song_from_queue(self, guild_id, song):
         audio_id = song["id"]
         if guild_id in self.queue:
             for song in self.queue[guild_id]:
@@ -128,7 +152,7 @@ class HansBot(commands.Bot):
 
                         self.current_song_title = title
                         await music_channel.send(msg)
-                        voice_client.play(audio_to_play, after=self.remove_song_from_queue(guild_id, song))
+                        voice_client.play(audio_to_play, after=await self.remove_song_from_queue(guild_id, song))
 
         except BaseException as e:
             logger.exception(f"Failed joining voice channel or playing audio: {e}")
@@ -155,104 +179,6 @@ class HansBot(commands.Bot):
     @play_queue.before_loop
     async def before_my_task(self):
         await self.wait_until_ready()  # wait until the bot logs in
-
-    async def on_ready(self):
-        await bot.change_presence(status=discord.Status.online)
-        logger.info(f'Logged on as {bot.user}!')
-
-    async def on_message(self, message):
-        if message.author == self.user:
-            return
-
-        msg = message.content
-        if msg.startswith('!plæy'):  # TODO don't do this, make on_message into a command instead
-            pass
-        else:
-            await self.process_commands(message)
-
-        guild_id = message.guild.id 
-        if message.guild.id not in self.queue:
-            self.queue[guild_id] = []
-            
-        voice_client = None
-
-        # Determine if this is a music channel
-        channel_posted_in = message.channel
-        if 'music' in channel_posted_in.topic.lower():
-            music_channel_id = message.channel.id
-            self.music_channels[guild_id] = music_channel_id
-        else:
-            return
-
-        if message.author.voice:  # check if user is in a voice channel
-            channel_id_user = message.author.voice.channel.id
-        else:
-            return
-
-        if msg.startswith('!plæy') and music_channel_id:
-            _split = msg.split()
-            if len(_split) > 0:
-                url = _split[1]
-            else:
-                logger.error(f"Could not parse url from message '{msg}'")
-                return
-
-            try:
-                _ydl = youtube_dl.YoutubeDL(ydl_opts)
-                with _ydl as ydl:
-                    song_info = ydl.extract_info(url, download=False)
-
-                title = song_info['title']
-                duration = song_info.get('duration')
-                audio_id = f"{title}-{song_info['id']}"
-                url_to_play = song_info["formats"][0]["url"]
-
-                audio = discord.FFmpegPCMAudio(url_to_play, **ffmpeg_opts)
-
-            except BaseException as e:
-                logger.exception(f"Failed downloading from url '{url}': {e}")
-                return
-
-            try:
-                # Join voice channel and play the downloaded audio
-                channel = self.get_channel(channel_id_user)
-                if not self.voice_clients:
-                    voice_client = await channel.connect(timeout=300)
-                else:
-                    # When the bot is in multiple voice channels, use the channel that is in the same guild as
-                    # the guild that the message was sent form
-                    for connected_voice in self.voice_clients:
-                        if connected_voice.guild.id == message.guild.id:
-                            voice_client = connected_voice
-                            break
-
-                if not voice_client:
-                    logger.error(f"Unable to fetch voice client.")
-                    return
-                
-                num_in_queue = len(self.queue[guild_id])
-                self.queue[guild_id].append({"url": url_to_play,
-                                             "id": audio_id,
-                                             "audio": audio,
-                                             "voice_channel_id": channel_id_user,
-                                             "music_channel_id": music_channel_id,
-                                             "title": title,
-                                             "duration": duration,
-                                             "requested_by": message.author,
-                                             "position": num_in_queue})
-
-                logger.info(f"> Added '{title}' to queue")
-
-                msg = f"> Added **{title}** to the queue (number #{num_in_queue+1} in queue)"
-                music_channel = self.get_channel(music_channel_id)
-                await music_channel.send(msg)
-                if self.play_queue.is_running() is False:
-                    self.play_queue.start()
-
-                # await self.play_queue()
-
-            except BaseException as e:
-                logger.exception(f"Failed joining channel or playing audio: {e}")
 
     async def on_voice_state_update(self, member, before, after):
         # We should leave the voice channel if no-one else is in the channel
@@ -300,7 +226,82 @@ async def skip(ctx):
             if msg_guild_id == voice_client.guild.id and channel_id_user == voice_client.channel.id:
                 voice_client.stop()
 
-# bot.add_command(skip)
+
+@bot.command()
+async def plæy(ctx):
+    message = ctx.message
+    if message.author == bot.user:
+        return
+
+    msg = message.content
+    guild_id = message.guild.id
+    voice_client = None
+
+    # Determine if this was posted in the guild's music channel
+    channel_posted_in = message.channel
+    if channel_posted_in.id == bot.music_channels.get(guild_id):
+        music_channel_id = message.channel.id
+    else:
+        return
+
+    if message.author.voice:  # check if user is in a voice channel
+        channel_id_user = message.author.voice.channel.id
+    else:
+        return
+
+    _split = msg.split()
+    if len(_split) > 0:
+        url = _split[1]
+    else:
+        logger.error(f"Could not parse url from message '{msg}'")
+        return
+
+    try:
+        _ydl = youtube_dl.YoutubeDL(ydl_opts)
+        with _ydl as ydl:
+            song_info = ydl.extract_info(url, download=False)
+
+        title = song_info['title']
+        duration = song_info.get('duration')
+        audio_id = f"{title}-{song_info['id']}"
+        url_to_play = song_info["formats"][0]["url"]
+
+        audio = discord.FFmpegPCMAudio(url_to_play, **ffmpeg_opts)
+
+    except BaseException as e:
+        logger.exception(f"Failed downloading from url '{url}': {e}")
+        return
+
+    try:
+        # Join voice channel and play the downloaded audio
+        channel = bot.get_channel(channel_id_user)
+        if not bot.voice_clients:
+            voice_client = await channel.connect(timeout=300)
+        else:
+            # When the bot is in multiple voice channels, use the channel that is in the same guild as
+            # the guild that the message was sent form
+            for connected_voice in bot.voice_clients:
+                if connected_voice.guild.id == message.guild.id:
+                    voice_client = connected_voice
+                    break
+
+        if not voice_client:
+            logger.error(f"Unable to fetch voice client.")
+            return
+
+        audio = {"url": url_to_play,
+                 "id": audio_id,
+                 "audio": audio,
+                 "voice_channel_id": channel_id_user,
+                 "music_channel_id": music_channel_id,
+                 "title": title,
+                 "duration": duration,
+                 "requested_by": message.author}
+
+        await bot.add_song_to_queue(guild_id, audio)
+
+    except BaseException as e:
+        logger.exception(f"Failed joining channel or playing audio: {e}")
 
 # @bot.command(pass_context=True)
 # async def join(ctx):
