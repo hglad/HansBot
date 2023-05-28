@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 import logging
 import aiohttp
@@ -27,7 +28,6 @@ handler.setFormatter(formatter)
 logger.addHandler(handler)
 logger.setLevel(level)
 
-# guild_id = os.getenv('GUILD_ID')
 token = os.getenv('DISCORD_TOKEN')
 
 
@@ -311,7 +311,7 @@ async def plæy(ctx):
         audio_id = f"{title}-{song_info['id']}"
         url_to_play = song_info["formats"][0]["url"]
 
-        audio = discord.FFmpegPCMAudio(url_to_play, **ffmpeg_opts)
+        audio_source = discord.FFmpegPCMAudio(url_to_play, **ffmpeg_opts)
 
     except BaseException as e:
         logger.exception(f"Failed downloading from url '{url}': {e}")
@@ -336,7 +336,7 @@ async def plæy(ctx):
 
         audio = {"url": url_to_play,
                  "id": audio_id,
-                 "audio": audio,
+                 "audio": audio_source,
                  "voice_channel_id": channel_id_user,
                  "music_channel_id": music_channel_id,
                  "title": title,
@@ -429,6 +429,9 @@ async def resume(ctx):
     music_channel = bot.get_channel(music_channel_id)
 
     voice_client = bot.get_voice_client_for_guild(ctx.guild)
+    if not voice_client:
+        return
+
     if voice_client and not voice_client.is_playing():
         audio_source = voice_client.source
         if audio_source:
@@ -445,30 +448,48 @@ async def resume(ctx):
 
 @bot.command()
 async def disconnect(ctx):
-    # TODO
-    pass
+    user_is_in_voice = bot.is_user_in_correct_voice_channel(message=ctx)
+    msg_in_music_channel = bot.is_message_in_music_channel(message=ctx)
+
+    if not user_is_in_voice:
+        logger.info(f"User is not in the correct voice channel.")
+        return
+
+    if not msg_in_music_channel:
+        logger.info(f"Command was not posted in a music channel.")
+        return
+
+    voice_client = bot.get_voice_client_for_guild(ctx.guild)
+    if voice_client:
+        await voice_client.disconnect()
+        await bot.clear_queue(ctx.guild.id)
 
 
-@bot.command()
-async def queue(ctx):
-    # TODO
-    pass
+@bot.command(name='queue')
+async def get_queue(ctx):
+    queue = bot.queue.get(ctx.guild.id)
+    readable_queue = []
 
+    music_channel_id = bot.music_channels.get(ctx.guild.id)
+    music_channel = bot.get_channel(music_channel_id)
 
-# @bot.command(pass_context=True)
-# async def join(ctx):
-#     try:
-#         if ctx.author.voice:
-#             channel = ctx.message.author.voice.channel
-#             await channel.connect()
-#         else:
-#             await ctx.send("You are not in a voice channel. Must be in a voice channel to run this command.")
-#         # voice_client = await channel.connect()
-#         # Do something with the voice_client
-#
-#     except BaseException as e:
-#         print(f'An error occurred while joining the voice channel: {e}')
-#
+    for i, audio in enumerate(queue):
+        pos = i + 1
+        if audio.get('duration'):
+            duration_fmt = bot.seconds_to_mm_ss(audio['duration'])
+            queue_element = f"**{pos}. {audio['title']}**{duration_fmt}\n_requested by {audio['requested_by']}_\n"
+        else:
+            queue_element = f"**{pos}. {audio['title']}**\n_requested by {audio['requested_by']}_"
+
+        readable_queue.append(queue_element)
+
+    if not readable_queue:
+        msg = f"> The queue is empty."
+    else:
+        msg = ">>> %s" % '\n'.join(readable_queue)
+
+    await music_channel.send(msg)
+
 
 # TODO if download is True in ydl.extract_info(), this might be a more stable way to play the audio, but might be an issue with larger files
 # song_path = str(song_info['title']) + "-" + str(song_info['id'] + ".mp3")
