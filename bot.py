@@ -57,7 +57,6 @@ ffmpeg_opts = {
 class HansBot(commands.Bot):
     def __init__(self, command_prefix, intents, **options):
         super().__init__(command_prefix=command_prefix, intents=intents, **options)
-        self.current_song_title = None
         self.current_song = {}
         self.queue = {}
         self.music_channels = {}
@@ -214,10 +213,9 @@ class HansBot(commands.Bot):
                         else:
                             msg += f"> # {title})\n"
 
-                        msg += f"> _requested by {song['requested_by']}_\n" \
-                               f"> _Queue length: {len(guild_queue)-1}_"
+                        msg += f"> _requested by {song['requested_by']}_\n"
+                        # f"> _Queue length: {len(guild_queue)-1}_"
 
-                        self.current_song_title = title
                         self.current_song = song
                         await music_channel.send(msg)
                         voice_client.play(audio_to_play, after=await self.remove_song_from_queue(guild_id, song))
@@ -242,7 +240,7 @@ class HansBot(commands.Bot):
         if set_presence:
             try:
                 idle_activity = discord.Activity(type=discord.ActivityType.playing, name="nothing at the moment")
-                if self.current_song_title:
+                if self.current_song:
                     voice_clients = self.voice_clients
                     if not voice_clients:
                         await bot.change_presence(activity=idle_activity)
@@ -250,7 +248,7 @@ class HansBot(commands.Bot):
                         for voice in voice_clients:
                             if voice.is_playing():
                                 activity = discord.Activity(type=discord.ActivityType.playing,
-                                                            name=self.current_song_title)
+                                                            name=self.current_song['title'])
                                 await bot.change_presence(activity=activity)
                                 return
                         await bot.change_presence(activity=idle_activity)
