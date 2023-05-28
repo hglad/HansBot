@@ -117,6 +117,30 @@ class HansBot(commands.Bot):
                 return voice_client
         return None
 
+    def is_user_in_correct_voice_channel(self, message):
+        msg_guild_id = message.guild.id
+        if message.author.voice:
+            voice_channel_user = message.author.voice.channel
+            if not voice_channel_user:
+                return False
+
+            # Check if the bot is in the same voice channel
+            bot_voice_channel = self.music_channels.get(msg_guild_id)
+            if bot_voice_channel:
+                return True
+            else:
+                return False
+        else:
+            return False
+
+    def is_message_in_music_channel(self, message):
+        channel_posted_in = message.channel
+        if channel_posted_in.id == self.music_channels.get(message.guild.id):
+            return True
+        else:
+            return False
+
+
     def seconds_to_mm_ss(self, duration_seconds):
         minutes = duration_seconds // 60
         seconds = duration_seconds % 60
@@ -127,7 +151,7 @@ class HansBot(commands.Bot):
         # self.play_queue.start()
 
     @tasks.loop(seconds=5)
-    async def play_queue(self):
+    async def play_queue(self, set_presence=False):
         # Check if we should play something from the queue and update activity with the audio we are playing
         try:
             for guild_id, guild_queue in self.queue.items():
@@ -157,24 +181,26 @@ class HansBot(commands.Bot):
         except BaseException as e:
             logger.exception(f"Failed joining voice channel or playing audio: {e}")
 
-        try:
-            idle_activity = discord.Activity(type=discord.ActivityType.playing, name="nothing at the moment")
-            if self.current_song_title:
-                voice_clients = self.voice_clients
-                if not voice_clients:
-                    await bot.change_presence(activity=idle_activity)
+        if set_presence:
+            try:
+                idle_activity = discord.Activity(type=discord.ActivityType.playing, name="nothing at the moment")
+                if self.current_song_title:
+                    voice_clients = self.voice_clients
+                    if not voice_clients:
+                        await bot.change_presence(activity=idle_activity)
+                    else:
+                        for voice in voice_clients:
+                            if voice.is_playing():
+                                activity = discord.Activity(type=discord.ActivityType.playing,
+                                                            name=self.current_song_title)
+                                await bot.change_presence(activity=activity)
+                                return
+                        await bot.change_presence(activity=idle_activity)
                 else:
-                    for voice in voice_clients:
-                        if voice.is_playing():
-                            activity = discord.Activity(type=discord.ActivityType.playing, name=self.current_song_title)
-                            await bot.change_presence(activity=activity)
-                            return
                     await bot.change_presence(activity=idle_activity)
-            else:
-                await bot.change_presence(activity=idle_activity)
 
-        except BaseException as e:
-            logger.exception(f"Failed setting activity: {e}")
+            except BaseException as e:
+                logger.exception(f"Failed setting activity: {e}")
 
     @play_queue.before_loop
     async def before_my_task(self):
@@ -203,28 +229,10 @@ class HansBot(commands.Bot):
                         await connected_voice.disconnect()
 
     async def on_typing(self, channel, member, when):
-        logger.info(f"{member} is typing in channel '{channel}'")
+        logger.info(f"{member} is typing in channel '{channel}' ({channel.guild.name})")
 
 
 bot = HansBot(command_prefix='!', intents=discord.Intents.all())
-
-
-@bot.command()
-async def skip(ctx):
-    # queue = bot.queue.get(msg_guild_id)
-    msg_guild_id = ctx.guild.id
-    voice_clients = bot.voice_clients
-
-    if ctx.author.voice:  # check if user is in the correct voice channel
-        channel_id_user = ctx.author.voice.channel.id
-    else:
-        return
-
-    if msg_guild_id in bot.music_channels:
-        for voice_client in voice_clients:
-            # If the guild (server) matches and the user is in the same voice channel as the bot, we stop
-            if msg_guild_id == voice_client.guild.id and channel_id_user == voice_client.channel.id:
-                voice_client.stop()
 
 
 @bot.command()
@@ -247,6 +255,7 @@ async def plæy(ctx):
     if message.author.voice:  # check if user is in a voice channel
         channel_id_user = message.author.voice.channel.id
     else:
+        logger.info(f"User is not in the correct voice channel.")
         return
 
     _split = msg.split()
@@ -302,6 +311,44 @@ async def plæy(ctx):
 
     except BaseException as e:
         logger.exception(f"Failed joining channel or playing audio: {e}")
+
+
+@bot.command()
+async def skip(ctx):
+    # queue = bot.queue.get(msg_guild_id)
+    user_is_in_voice = bot.is_user_in_correct_voice_channel(message=ctx)
+    msg_in_music_channel = bot.is_message_in_music_channel(message=ctx)
+
+    if not user_is_in_voice:
+        logger.info(f"User is not in the correct voice channel.")
+        return
+
+    if not msg_in_music_channel:
+        logger.info(f"Command was not posted in a music channel.")
+        return
+
+    bot_voice_client = bot.get_voice_client_for_channel(ctx.author.voice.channel)
+    if bot_voice_client:
+        bot_voice_client.stop()
+
+
+@bot.command()
+async def stop(ctx):
+    # queue = bot.queue.get(msg_guild_id)
+    msg_guild_id = ctx.guild.id
+    voice_clients = bot.voice_clients
+
+    if ctx.author.voice:  # check if user is in the correct voice channel
+        channel_id_user = ctx.author.voice.channel.id
+    else:
+        return
+
+    if msg_guild_id in bot.music_channels:
+        for voice_client in voice_clients:
+            # If the guild (server) matches and the user is in the same voice channel as the bot, we stop
+            if msg_guild_id == voice_client.guild.id and channel_id_user == voice_client.channel.id:
+                voice_client.stop()
+
 
 # @bot.command(pass_context=True)
 # async def join(ctx):
