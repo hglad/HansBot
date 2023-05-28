@@ -31,17 +31,6 @@ logger.setLevel(level)
 token = os.getenv('DISCORD_TOKEN')
 
 
-class MyLogger(object):
-    def debug(self, msg):
-        pass
-
-    def warning(self, msg):
-        pass
-
-    def error(self, msg):
-        print(msg)
-
-
 def my_hook(d):
     if d['status'] == 'finished':
         print('Done downloading, now converting ...')
@@ -69,6 +58,7 @@ class HansBot(commands.Bot):
     def __init__(self, command_prefix, intents, **options):
         super().__init__(command_prefix=command_prefix, intents=intents, **options)
         self.current_song_title = None
+        self.current_song = {}
         self.queue = {}
         self.music_channels = {}
         # self.play_lock = asyncio.Lock()  # Prevent attempting to play the same song twice, leading to an exception
@@ -109,18 +99,8 @@ class HansBot(commands.Bot):
     async def clear_queue(self, guild_id):
         self.queue[guild_id] = []
 
-    def is_playing_in_channel(self, channel):
-        for connected_voice in self.voice_clients:
-            if connected_voice.is_playing() and connected_voice.channel.id == channel.id:
-                return True
-        return False
-
-    def is_in_guild_channel(self, guild):
-        # Is the bot in any voice channels of the given guild?
-        for connected_voice in self.voice_clients:
-            if connected_voice.channel.guild == guild.id:
-                return True
-        return False
+    def get_queue(self, guild_id):
+        return self.queue.get(guild_id)
 
     def get_user_voice_channel(self, message):
         if message.author.voice:
@@ -143,6 +123,24 @@ class HansBot(commands.Bot):
             if voice_client.guild.id == guild.id:
                 return voice_client
         return None
+
+    def get_music_channel_for_guild(self, guild):
+        music_channel_id = self.music_channels.get(guild.id)
+        music_channel = self.get_channel(music_channel_id)
+        return music_channel
+
+    def is_playing_in_channel(self, channel):
+        for connected_voice in self.voice_clients:
+            if connected_voice.is_playing() and connected_voice.channel.id == channel.id:
+                return True
+        return False
+
+    def is_in_guild_channel(self, guild):
+        # Is the bot in any voice channels of the given guild?
+        for connected_voice in self.voice_clients:
+            if connected_voice.channel.guild == guild.id:
+                return True
+        return False
 
     def is_voice_channel_empty(self, channel):
         # Return True if the voice channel is empty (not including the bot itself)
@@ -203,7 +201,7 @@ class HansBot(commands.Bot):
                     # TODO should we loop through all the songs here?
                     channel = self.get_channel(song["voice_channel_id"])
                     voice_client = self.get_voice_client_for_channel(channel)
-                    if not voice_client.is_playing():
+                    if not voice_client.is_playing() and not voice_client.is_paused():
                         audio_to_play = song["audio"]
                         title = song["title"]
 
@@ -220,6 +218,7 @@ class HansBot(commands.Bot):
                                f"> _Queue length: {len(guild_queue)-1}_"
 
                         self.current_song_title = title
+                        self.current_song = song
                         await music_channel.send(msg)
                         voice_client.play(audio_to_play, after=await self.remove_song_from_queue(guild_id, song))
 
@@ -349,39 +348,49 @@ async def plæy(ctx):
         logger.exception(f"Failed joining channel or playing audio: {e}")
 
 
-@bot.command()
-async def skip(ctx):
+def command_is_valid(ctx):
     user_is_in_voice = bot.is_user_in_correct_voice_channel(message=ctx)
     msg_in_music_channel = bot.is_message_in_music_channel(message=ctx)
 
     if not user_is_in_voice:
         logger.info(f"User is not in the correct voice channel.")
+        return False
+
+    if not msg_in_music_channel:
+        logger.info(f"Command was not posted in a music channel.")
+        return False
+
+    return True
+
+
+@bot.command()
+async def skip(ctx):
+    if not command_is_valid(ctx):
         return
 
     user_voice_channel = ctx.author.voice.channel
-    if not msg_in_music_channel:
-        logger.info(f"Command was not posted in a music channel.")
-        return
 
     bot_voice_client = bot.get_voice_client_for_channel(user_voice_channel)
     if bot_voice_client:
         bot_voice_client.stop()
     else:
-        logger.info(f"I'm not playing anything in voice channel '{user_voice_channel}'.")
+        music_channel = bot.get_music_channel_for_guild(ctx.guild)
+        msg = f"> I'm not playing anything in voice channel '{user_voice_channel}'."
+        await music_channel.send(msg)
 
 
 @bot.command()
 async def stop(ctx):
+    if not command_is_valid(ctx):
+        return
+
     # Clear the queue and stop playing audio
-    guild_id = ctx.guild.id
     user_voice_channel = bot.get_user_voice_channel(message=ctx)
     is_playing = bot.is_playing_in_channel(user_voice_channel)
-
-    music_channel_id = bot.music_channels.get(guild_id)
-    music_channel = bot.get_channel(music_channel_id)
+    music_channel = bot.get_music_channel_for_guild(ctx.guild)
 
     if is_playing and bot.is_message_in_music_channel(message=ctx):
-        await bot.clear_queue(guild_id)
+        await bot.clear_queue(ctx.guild.id)
         await skip(ctx)
         msg = f"> Cleared queue and stopped playing music."
         await music_channel.send(msg)
@@ -389,20 +398,10 @@ async def stop(ctx):
 
 @bot.command()
 async def pause(ctx):
-    user_is_in_voice = bot.is_user_in_correct_voice_channel(message=ctx)
-    msg_in_music_channel = bot.is_message_in_music_channel(message=ctx)
-
-    if not user_is_in_voice:
-        logger.info(f"User is not in the correct voice channel.")
+    if not command_is_valid(ctx):
         return
 
-    if not msg_in_music_channel:
-        logger.info(f"Command was not posted in a music channel.")
-        return
-
-    music_channel_id = bot.music_channels.get(ctx.guild.id)
-    music_channel = bot.get_channel(music_channel_id)
-
+    music_channel = bot.get_music_channel_for_guild(ctx.guild)
     voice_client = bot.get_voice_client_for_guild(ctx.guild)
     if voice_client and voice_client.is_playing():
         voice_client.pause()
@@ -414,20 +413,10 @@ async def pause(ctx):
 
 @bot.command()
 async def resume(ctx):
-    user_is_in_voice = bot.is_user_in_correct_voice_channel(message=ctx)
-    msg_in_music_channel = bot.is_message_in_music_channel(message=ctx)
-
-    if not user_is_in_voice:
-        logger.info(f"User is not in the correct voice channel.")
+    if not command_is_valid(ctx):
         return
 
-    if not msg_in_music_channel:
-        logger.info(f"Command was not posted in a music channel.")
-        return
-
-    music_channel_id = bot.music_channels.get(ctx.guild.id)
-    music_channel = bot.get_channel(music_channel_id)
-
+    music_channel = bot.get_music_channel_for_guild(ctx.guild)
     voice_client = bot.get_voice_client_for_guild(ctx.guild)
     if not voice_client:
         return
@@ -448,15 +437,7 @@ async def resume(ctx):
 
 @bot.command()
 async def disconnect(ctx):
-    user_is_in_voice = bot.is_user_in_correct_voice_channel(message=ctx)
-    msg_in_music_channel = bot.is_message_in_music_channel(message=ctx)
-
-    if not user_is_in_voice:
-        logger.info(f"User is not in the correct voice channel.")
-        return
-
-    if not msg_in_music_channel:
-        logger.info(f"Command was not posted in a music channel.")
+    if not command_is_valid(ctx):
         return
 
     voice_client = bot.get_voice_client_for_guild(ctx.guild)
@@ -466,20 +447,61 @@ async def disconnect(ctx):
 
 
 @bot.command(name='queue')
-async def get_queue(ctx):
-    queue = bot.queue.get(ctx.guild.id)
+async def queue(ctx):
+    guild_queue = bot.get_queue(ctx.guild.id)
     readable_queue = []
+    music_channel = bot.get_music_channel_for_guild(ctx.guild)
+    current_audio = bot.current_song
+    if current_audio:
+        title = current_audio["title"]
+        requested_by = current_audio['requested_by']
+        playing_element = f"## **Currently playing:**\n "
+        if current_audio.get('duration'):
+            duration_fmt = bot.seconds_to_mm_ss(current_audio["duration"])
+            playing_element += f"**{title}** _({duration_fmt})_\n" \
+                               f"    _requested by {requested_by}_\n"
+        else:
+            playing_element += f"**{title}**_\n" \
+                               f"    _requested by {requested_by}_\n"
 
-    music_channel_id = bot.music_channels.get(ctx.guild.id)
-    music_channel = bot.get_channel(music_channel_id)
+        readable_queue.append(playing_element)
 
-    for i, audio in enumerate(queue):
+    readable_queue.append(f"## **Queue:**\n")
+    for i, audio in enumerate(guild_queue):
         pos = i + 1
         if audio.get('duration'):
             duration_fmt = bot.seconds_to_mm_ss(audio['duration'])
-            queue_element = f"**{pos}. {audio['title']}**{duration_fmt}\n_requested by {audio['requested_by']}_\n"
+            queue_element = f"**{pos}.** **{audio['title']}** _({duration_fmt})_\n" \
+                            f"    _requested by {audio['requested_by']}_\n"
         else:
-            queue_element = f"**{pos}. {audio['title']}**\n_requested by {audio['requested_by']}_"
+            queue_element = f"**{pos}. {audio['title']}**\n" \
+                            f"    _requested by {audio['requested_by']}_"
+
+        readable_queue.append(queue_element)
+
+    if not readable_queue:
+        msg = f"> The queue is empty."
+    else:
+        msg = ">>> %s" % '\n'.join(readable_queue)
+
+    await music_channel.send(msg)
+
+
+@bot.command()
+async def playing(ctx):
+    # TODO
+    guild_queue = bot.get_queue(ctx.guild.id)
+    readable_queue = []
+    music_channel = bot.get_music_channel_for_guild(ctx.guild)
+    for i, audio in enumerate(guild_queue):
+        pos = i + 1
+        if audio.get('duration'):
+            duration_fmt = bot.seconds_to_mm_ss(audio['duration'])
+            queue_element = f"**{pos}. {audio['title']}**{duration_fmt}\n" \
+                            f"    _requested by {audio['requested_by']}_\n"
+        else:
+            queue_element = f"**{pos}. {audio['title']}**\n" \
+                            f"    _requested by {audio['requested_by']}_"
 
         readable_queue.append(queue_element)
 
