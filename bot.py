@@ -125,6 +125,17 @@ class HansBot(commands.Bot):
                 return voice_client
         return None
 
+    def is_voice_channel_empty(self, channel):
+        # Return True if the voice channel is empty (not including the bot itself)
+        users_in_channel = [user.id for user in channel.members]
+        if self.user.id in users_in_channel:
+            users_in_channel.remove(self.user.id)
+
+        if len(users_in_channel) == 0:
+            return True
+        else:
+            return False
+
     def is_user_in_correct_voice_channel(self, message):
         msg_guild = message.guild
         if message.author.voice:
@@ -164,12 +175,13 @@ class HansBot(commands.Bot):
         # start the task to run in the background
         # self.play_queue.start()
 
-    @tasks.loop(seconds=5)
+    @tasks.loop(seconds=3)
     async def play_queue(self, set_presence=False):
         # Check if we should play something from the queue and update activity with the audio we are playing
         try:
             for guild_id, guild_queue in self.queue.items():
                 for song in guild_queue:
+                    # TODO should we loop through all the songs here?
                     channel = self.get_channel(song["voice_channel_id"])
                     voice_client = self.get_voice_client_for_channel(channel)
                     if not voice_client.is_playing():
@@ -195,6 +207,20 @@ class HansBot(commands.Bot):
         except BaseException as e:
             logger.exception(f"Failed joining voice channel or playing audio: {e}")
 
+        # We should leave the voice channel if no-one else is in the channel and there is nothing to play
+        for connected_voice in self.voice_clients:
+            guild_id = connected_voice.guild.id
+            channel = connected_voice.channel
+            is_empty = self.is_voice_channel_empty(channel)
+            is_playing = connected_voice.is_playing()
+            is_queue_empty = True if not self.queue[guild_id] else False
+            if is_empty and not is_playing and is_queue_empty:
+                logger.info(f"Disconnecting from channel '{channel.name}'.")
+                music_channel_id = self.music_channels.get(guild_id)
+                music_channel = self.get_channel(music_channel_id)
+                await music_channel.send(f"> All users have left and the queue is empty, disconnecting now.")
+                await connected_voice.disconnect()
+
         if set_presence:
             try:
                 idle_activity = discord.Activity(type=discord.ActivityType.playing, name="nothing at the moment")
@@ -219,28 +245,6 @@ class HansBot(commands.Bot):
     @play_queue.before_loop
     async def before_my_task(self):
         await self.wait_until_ready()  # wait until the bot logs in
-
-    # async def on_voice_state_update(self, member, before, after):
-    #     # We should leave the voice channel if no-one else is in the channel
-    #     if after.channel is not None:
-    #         channel_with_update = after.channel
-    #     else:
-    #         channel_with_update = before.channel
-    #
-    #     if self.voice_clients and channel_with_update:
-    #         for connected_voice in self.voice_clients:
-    #             # This is an update to a channel that we are currently playing audio in
-    #             if channel_with_update.id == connected_voice.channel.id:
-    #                 users_in_channel = [user.id for user in channel_with_update.members]
-    #                 users_in_channel.remove(self.user.id)
-    #                 if len(users_in_channel) == 0:
-    #                     logger.info(f"Disconnecting from channel '{channel_with_update.name}' since all "
-    #                                 f"users have left.")
-    #                     guild_id = channel_with_update.guild.id
-    #                     music_channel_id = self.music_channels.get(guild_id)
-    #                     music_channel = self.get_channel(music_channel_id)
-    #                     await music_channel.send(f"> All users have left, disconnecting now.")
-    #                     await connected_voice.disconnect()
 
     async def on_typing(self, channel, member, when):
         logger.info(f"{member} is typing in channel '{channel}' ({channel.guild.name})")
@@ -268,6 +272,7 @@ async def plæy(ctx):
     if not bot.is_user_in_correct_voice_channel(message=ctx):
         logger.info(f"User is not in the correct voice channel.")
         return
+
     channel_id_user = message.author.voice.channel.id
 
     _split = msg.split()
@@ -297,7 +302,7 @@ async def plæy(ctx):
         # Join voice channel and play the downloaded audio
         channel = bot.get_channel(channel_id_user)
         if not bot.voice_clients:
-            voice_client = await channel.connect(timeout=300)
+            voice_client = await channel.connect(timeout=60)
         else:
             # When the bot is in multiple voice channels, use the channel that is in the same guild as
             # the guild that the message was sent form
