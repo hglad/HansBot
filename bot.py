@@ -29,7 +29,7 @@ logger.addHandler(handler)
 logger.setLevel(level)
 
 token = os.getenv('DISCORD_TOKEN')
-
+TASK_INTERVAL = 3
 
 def my_hook(d):
     if d['status'] == 'finished':
@@ -60,6 +60,8 @@ class HansBot(commands.Bot):
         self.current_song = {}
         self.queue = {}
         self.music_channels = {}
+        self.idle_time = {}
+        self.task_interval = TASK_INTERVAL
         # self.play_lock = asyncio.Lock()  # Prevent attempting to play the same song twice, leading to an exception
         # self.play_lock = threading.Lock()
 
@@ -68,6 +70,7 @@ class HansBot(commands.Bot):
         await self.change_presence(activity=default_activity)
         for guild in self.guilds:
             self.queue[guild.id] = []
+            self.idle_time[guild.id] = 0
             for channel in guild.channels:
                 if isinstance(channel, discord.TextChannel) and channel.topic and 'music' in channel.topic.lower():
                     self.music_channels[guild.id] = channel.id
@@ -112,30 +115,36 @@ class HansBot(commands.Bot):
         else:
             return None
 
-    def get_voice_client_for_channel(self, channel):
+    def get_voice_client_for_channel(self, channel):  # TODO feed this channel_id
+        if channel is None:
+            logger.warning(f"Got channel 'None' in get_voice_client_for_channel()")
+            return None
         for voice_client in self.voice_clients:
             if voice_client.channel.id == channel.id:
                 return voice_client
         return None
 
-    def get_voice_client_for_guild(self, guild):
+    def get_voice_client_for_guild(self, guild):  # TODO feed this guild_id
+        if guild is None:
+            logger.warning(f"Got guild 'None' in get_voice_client_for_guild()")
+            return None
         for voice_client in self.voice_clients:
             if voice_client.guild.id == guild.id:
                 return voice_client
         return None
 
-    def get_music_channel_for_guild(self, guild):
+    def get_music_channel_for_guild(self, guild):  # TODO feed this guild_id
         music_channel_id = self.music_channels.get(guild.id)
         music_channel = self.get_channel(music_channel_id)
         return music_channel
 
-    def is_playing_in_channel(self, channel):
+    def is_playing_in_channel(self, channel):  # TODO feed this channel_id
         for connected_voice in self.voice_clients:
             if connected_voice.is_playing() and connected_voice.channel.id == channel.id:
                 return True
         return False
 
-    def is_in_guild_channel(self, guild):
+    def is_in_guild_channel(self, guild):  # TODO feed this guild_id
         # Is the bot in any voice channels of the given guild?
         for connected_voice in self.voice_clients:
             if connected_voice.channel.guild == guild.id:
@@ -201,7 +210,7 @@ class HansBot(commands.Bot):
         # start the task to run in the background
         # self.play_queue.start()
 
-    @tasks.loop(seconds=3)
+    @tasks.loop(seconds=TASK_INTERVAL)
     async def play_queue(self, set_presence=False):
         # Check if we should play something from the queue and update activity with the audio we are playing
         try:
@@ -219,7 +228,8 @@ class HansBot(commands.Bot):
                     voice_client_guild = self.get_voice_client_for_guild(channel_song.guild)
 
                     if voice_client_guild:
-                        # If the voice client ids are not equal, we should disconnect and switch voice channel
+                        # Switch voice channel if the voice channel we are using in the guild is not playing anything
+                        # and if there is no voice client for the current song
                         if not self.is_audio_playing_or_paused(voice_client_guild) and not voice_client_song:
                             music_channel = self.get_music_channel_for_guild(channel_song.guild)
                             msg = f"> Switching to voice channel '{channel_song.name}'"
@@ -249,28 +259,47 @@ class HansBot(commands.Bot):
                             msg += f"> # {title})\n"
 
                         msg += f"> _requested by {song['requested_by']}_\n"
-                        # f"> _Queue length: {len(guild_queue)-1}_"
 
                         self.current_song[guild_id] = song
+                        self.idle_time[guild_id] = 0
                         await music_channel.send(msg)
                         voice_client.play(audio_to_play, after=await self.remove_song_from_queue(guild_id, song))
 
         except BaseException as e:
             logger.exception(f"Failed joining voice channel or playing audio: {e}")
 
-        # We should leave the voice channel if no-one else is in the channel and there is nothing to play
+        # Add to idle timer if we are connected but not playing anything
+        # TODO rough estimate, should use an actual timer instead of the task loop interval
+        guild_ids = list(self.music_channels.keys())
+        for guild_id in guild_ids:
+            guild = self.get_guild(guild_id)
+            voice_client = self.get_voice_client_for_guild(guild)
+
+            if voice_client:  # if there is no voice client, we are not connected, so it doesn't make sense to add time
+                is_playing = self.is_audio_playing_or_paused(voice_client)
+                if not is_playing:
+                    self.idle_time[guild_id] += self.task_interval
+
+        # We should leave the voice channel if no-one else is in the channel and there is nothing to play,
+        # or if we have been idle for a certain amount of time
         for connected_voice in self.voice_clients:
             guild_id = connected_voice.guild.id
             channel = connected_voice.channel
             is_empty = self.is_voice_channel_empty(channel)
-            is_playing = connected_voice.is_playing()
+            is_playing = self.is_audio_playing_or_paused(voice_client)
             is_queue_empty = True if not self.queue[guild_id] else False
-            if is_empty and not is_playing and is_queue_empty:
-                logger.info(f"Disconnecting from channel '{channel.name}'.")
+
+            if not is_playing and is_queue_empty:
                 music_channel_id = self.music_channels.get(guild_id)
                 music_channel = self.get_channel(music_channel_id)
-                await music_channel.send(f"> All users have left and the queue is empty, disconnecting now.")
-                await connected_voice.disconnect()
+
+                if self.idle_time[guild_id] > 600:
+                    await music_channel.send(f"> Disconnecting due to inactivity.")
+                    await connected_voice.disconnect()
+
+                elif is_empty and is_queue_empty:
+                    await music_channel.send(f"> All users have left and the queue is empty, disconnecting now.")
+                    await connected_voice.disconnect()
 
         if set_presence:
             try:
