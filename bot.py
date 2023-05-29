@@ -479,7 +479,7 @@ async def disconnect(ctx):
         await bot.clear_queue(ctx.guild.id)
 
 
-@bot.command(name='queue')
+@bot.command()
 async def queue(ctx):
     guild_queue = bot.get_queue(ctx.guild.id)
     readable_queue = []
@@ -522,26 +522,23 @@ async def queue(ctx):
 
 @bot.command()
 async def playing(ctx):
-    # TODO
-    guild_queue = bot.get_queue(ctx.guild.id)
-    readable_queue = []
     music_channel = bot.get_music_channel_for_guild(ctx.guild)
-    for i, audio in enumerate(guild_queue):
-        pos = i + 1
-        if audio.get('duration'):
-            duration_fmt = bot.seconds_to_mm_ss(audio['duration'])
-            queue_element = f"**{pos}. {audio['title']}**{duration_fmt}\n" \
-                            f"    _requested by {audio['requested_by']}_\n"
+    current_audio = bot.current_song.get(ctx.guild.id)
+    if current_audio:
+        title = current_audio["title"]
+        requested_by = current_audio['requested_by']
+        playing_element = f"## **Currently playing:**\n "
+        if current_audio.get('duration'):
+            duration_fmt = bot.seconds_to_mm_ss(current_audio["duration"])
+            playing_element += f"**{title}** _({duration_fmt})_\n" \
+                               f"    _requested by {requested_by}_"
         else:
-            queue_element = f"**{pos}. {audio['title']}**\n" \
-                            f"    _requested by {audio['requested_by']}_"
+            playing_element += f"**{title}**_\n" \
+                               f"    _requested by {requested_by}_"
 
-        readable_queue.append(queue_element)
-
-    if not readable_queue:
-        msg = f"> The queue is empty."
+        msg = f"> {playing_element}"
     else:
-        msg = ">>> %s" % '\n'.join(readable_queue)
+        msg = f"> I'm not playing anything currently."
 
     await music_channel.send(msg)
 
