@@ -97,6 +97,7 @@ class HansBot(commands.Bot):
 
     async def clear_queue(self, guild_id):
         self.queue[guild_id] = []
+        self.current_song = {}
 
     def get_queue(self, guild_id):
         return self.queue.get(guild_id)
@@ -140,6 +141,15 @@ class HansBot(commands.Bot):
             if connected_voice.channel.guild == guild.id:
                 return True
         return False
+
+    def is_audio_playing_or_paused(self, voice_client):
+        if not voice_client:
+            return False
+        else:
+            if voice_client.is_playing() or voice_client.is_paused():
+                return True
+            else:
+                return False
 
     def is_voice_channel_empty(self, channel):
         # Return True if the voice channel is empty (not including the bot itself)
@@ -198,18 +208,28 @@ class HansBot(commands.Bot):
             for guild_id, guild_queue in self.queue.items():
                 for song in guild_queue:
                     # TODO should we loop through all the songs here?
-                    channel = self.get_channel(song["voice_channel_id"])
-                    voice_client = self.get_voice_client_for_channel(channel)
+                    channel_song = self.get_channel(song["voice_channel_id"])
+                    voice_client_song = self.get_voice_client_for_channel(channel_song)
+                    voice_client_guild = self.get_voice_client_for_guild(channel_song.guild)
 
-                    # If not connected to any voice channels, we should do so at this point
-                    # voice_client_guild = self.get_voice_client_for_guild(guild)
-                    if not voice_client:
-                        voice_client = await channel.connect(timeout=60)
+                    if voice_client_guild:
+                        # If the voice client ids are not equal, we should disconnect and switch voice channel
+                        if not self.is_audio_playing_or_paused(voice_client_guild) and not voice_client_song:
+                            music_channel = self.get_music_channel_for_guild(channel_song.guild)
+                            msg = f"> Switching to voice channel '{channel_song.name}'"
+                            await music_channel.send(msg)
+                            await voice_client_guild.disconnect()
+                            voice_client = await channel_song.connect(timeout=60)
+                        else:
+                            # Keep using the same voice client
+                            voice_client = voice_client_guild
                     else:
-                        logger.error(f"Couldn't connect to voice client for song {song['title']}")
-                        return
+                        voice_client = voice_client_song
 
-                    if not voice_client.is_playing() and not voice_client.is_paused():
+                    if not voice_client:
+                        voice_client = await channel_song.connect(timeout=60)
+
+                    if not self.is_audio_playing_or_paused(voice_client_guild):
                         audio_to_play = song["audio"]
                         title = song["title"]
 
