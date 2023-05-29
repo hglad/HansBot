@@ -97,7 +97,7 @@ class HansBot(commands.Bot):
 
     async def clear_queue(self, guild_id):
         self.queue[guild_id] = []
-        self.current_song = {}
+        self.current_song[guild_id] = None
 
     def get_queue(self, guild_id):
         return self.queue.get(guild_id)
@@ -206,6 +206,12 @@ class HansBot(commands.Bot):
         # Check if we should play something from the queue and update activity with the audio we are playing
         try:
             for guild_id, guild_queue in self.queue.items():
+                if not guild_queue:
+                    guild = self.get_guild(guild_id)
+                    voice_client = self.get_voice_client_for_guild(guild)
+                    if not self.is_audio_playing_or_paused(voice_client):
+                        self.current_song[guild_id] = None
+
                 for song in guild_queue:
                     # TODO should we loop through all the songs here?
                     channel_song = self.get_channel(song["voice_channel_id"])
@@ -245,7 +251,7 @@ class HansBot(commands.Bot):
                         msg += f"> _requested by {song['requested_by']}_\n"
                         # f"> _Queue length: {len(guild_queue)-1}_"
 
-                        self.current_song = song
+                        self.current_song[guild_id] = song
                         await music_channel.send(msg)
                         voice_client.play(audio_to_play, after=await self.remove_song_from_queue(guild_id, song))
 
@@ -478,7 +484,7 @@ async def queue(ctx):
     guild_queue = bot.get_queue(ctx.guild.id)
     readable_queue = []
     music_channel = bot.get_music_channel_for_guild(ctx.guild)
-    current_audio = bot.current_song
+    current_audio = bot.current_song.get(ctx.guild.id)
     if current_audio:
         title = current_audio["title"]
         requested_by = current_audio['requested_by']
