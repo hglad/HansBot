@@ -279,13 +279,14 @@ class HansBot(commands.Bot):
                 is_playing = self.is_audio_playing_or_paused(voice_client)
                 if not is_playing:
                     self.idle_time[guild_id] += self.task_interval
+                    logger.debug(f"({guild.name}) Idle for {self.idle_time[guild_id]} seconds")
 
         # We should leave the voice channel if no-one else is in the channel and there is nothing to play,
         # or if we have been idle for a certain amount of time
         for connected_voice in self.voice_clients:
             guild_id = connected_voice.guild.id
             channel = connected_voice.channel
-            is_empty = self.is_voice_channel_empty(channel)
+            is_channel_empty = self.is_voice_channel_empty(channel)
             is_playing = self.is_audio_playing_or_paused(voice_client)
             is_queue_empty = True if not self.queue[guild_id] else False
 
@@ -297,7 +298,7 @@ class HansBot(commands.Bot):
                     await music_channel.send(f"> Disconnecting due to inactivity.")
                     await connected_voice.disconnect()
 
-                elif is_empty and is_queue_empty:
+                elif is_channel_empty:
                     await music_channel.send(f"> All users have left and the queue is empty, disconnecting now.")
                     await connected_voice.disconnect()
 
