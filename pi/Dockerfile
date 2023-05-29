@@ -1,4 +1,4 @@
-FROM python:3.9-slim
+FROM arm32v7/python:3.9-slim
 MAINTAINER Hans Erlend Bakken Glad "hanseglad@gmail.com"
 
 RUN apt-get update

@@ -200,6 +200,15 @@ class HansBot(commands.Bot):
                     # TODO should we loop through all the songs here?
                     channel = self.get_channel(song["voice_channel_id"])
                     voice_client = self.get_voice_client_for_channel(channel)
+
+                    # If not connected to any voice channels, we should do so at this point
+                    # voice_client_guild = self.get_voice_client_for_guild(guild)
+                    if not voice_client:
+                        voice_client = await channel.connect(timeout=60)
+                    else:
+                        logger.error(f"Couldn't connect to voice client for song {song['title']}")
+                        return
+
                     if not voice_client.is_playing() and not voice_client.is_paused():
                         audio_to_play = song["audio"]
                         title = song["title"]
