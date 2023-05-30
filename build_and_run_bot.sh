@@ -1,5 +1,4 @@
 #!/bin/bash
-docker kill $(docker ps -q)
 cd /home/hans/Projects/HansBot
 git pull
 
