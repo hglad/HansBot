@@ -2,7 +2,6 @@ import asyncio
 import json
 import os
 import logging
-import aiohttp
 import discord
 import youtube_dl
 import threading
