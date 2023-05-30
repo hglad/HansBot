@@ -296,6 +296,7 @@ class HansBot(commands.Bot):
                 if self.idle_time[guild_id] > 600:
                     await music_channel.send(f"> Disconnecting due to inactivity.")
                     await connected_voice.disconnect()
+                    self.idle_time[guild_id] = 0   # reset timer
 
                 elif is_channel_empty:
                     await music_channel.send(f"> All users have left and the queue is empty, disconnecting now.")
