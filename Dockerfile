@@ -10,6 +10,3 @@ ADD env.list env.list
 RUN pip install -r requirements.txt
 
 CMD ["python", "bot.py"]
-
-ARG GIT_REVISION
-LABEL git-revision=$GIT_REVISION
