@@ -114,39 +114,39 @@ class HansBot(commands.Bot):
         else:
             return None
 
-    def get_voice_client_for_channel(self, channel):  # TODO feed this channel_id
-        if channel is None:
-            logger.warning(f"Got channel 'None' in get_voice_client_for_channel()")
+    def get_voice_client_for_channel(self, channel_id):
+        if channel_id is None:
+            logger.warning(f"Got channel id 'None' in get_voice_client_for_channel()")
             return None
         for voice_client in self.voice_clients:
-            if voice_client.channel.id == channel.id:
+            if voice_client.channel.id == channel_id:
                 return voice_client
         return None
 
-    def get_voice_client_for_guild(self, guild):  # TODO feed this guild_id
-        if guild is None:
-            logger.warning(f"Got guild 'None' in get_voice_client_for_guild()")
+    def get_voice_client_for_guild(self, guild_id):
+        if guild_id is None:
+            logger.warning(f"Got guild id 'None' in get_voice_client_for_guild()")
             return None
         for voice_client in self.voice_clients:
-            if voice_client.guild.id == guild.id:
+            if voice_client.guild.id == guild_id:
                 return voice_client
         return None
 
-    def get_music_channel_for_guild(self, guild):  # TODO feed this guild_id
-        music_channel_id = self.music_channels.get(guild.id)
+    def get_music_channel_for_guild(self, guild_id):
+        music_channel_id = self.music_channels.get(guild_id)
         music_channel = self.get_channel(music_channel_id)
         return music_channel
 
-    def is_playing_in_channel(self, channel):  # TODO feed this channel_id
+    def is_playing_in_channel(self, channel_id):
         for connected_voice in self.voice_clients:
-            if connected_voice.is_playing() and connected_voice.channel.id == channel.id:
+            if connected_voice.is_playing() and connected_voice.channel.id == channel_id:
                 return True
         return False
 
-    def is_in_guild_channel(self, guild):  # TODO feed this guild_id
+    def is_in_guild_channel(self, guild_id):
         # Is the bot in any voice channels of the given guild?
         for connected_voice in self.voice_clients:
-            if connected_voice.channel.guild == guild.id:
+            if connected_voice.channel.guild == guild_id:
                 return True
         return False
 
@@ -173,16 +173,16 @@ class HansBot(commands.Bot):
     def is_user_in_correct_voice_channel(self, message):
         msg_guild = message.guild
         if message.author.voice:
-            voice_channel_user = message.author.voice.channel
-            if not voice_channel_user:
+            voice_channel_id_user = message.author.voice.channel.id
+            if not voice_channel_id_user:
                 return False
 
             # Check if the bot is in the same voice channel, or if this is a channel that the bot needs to join
-            bot_voice_channel = bot.get_voice_client_for_channel(voice_channel_user)
+            bot_voice_channel = bot.get_voice_client_for_channel(voice_channel_id_user)
 
             # The user is not in the same voice channel
             if not bot_voice_channel:
-                if not bot.is_in_guild_channel(msg_guild):
+                if not bot.is_in_guild_channel(msg_guild.id):
                     # The bot is not in any voice channels for the given guild
                     return True
                 else:
@@ -215,22 +215,22 @@ class HansBot(commands.Bot):
         try:
             for guild_id, guild_queue in self.queue.items():
                 if not guild_queue:
-                    guild = self.get_guild(guild_id)
-                    voice_client = self.get_voice_client_for_guild(guild)
+                    voice_client = self.get_voice_client_for_guild(guild_id)
                     if not self.is_audio_playing_or_paused(voice_client):
                         self.current_song[guild_id] = None
 
                 for song in guild_queue:
                     # TODO should we loop through all the songs here?
-                    channel_song = self.get_channel(song["voice_channel_id"])
-                    voice_client_song = self.get_voice_client_for_channel(channel_song)
-                    voice_client_guild = self.get_voice_client_for_guild(channel_song.guild)
+                    channel_song_id = song["voice_channel_id"]
+                    channel_song = self.get_channel(channel_song_id)
+                    voice_client_song = self.get_voice_client_for_channel(channel_song_id)
+                    voice_client_guild = self.get_voice_client_for_guild(channel_song.guild.id)
 
                     if voice_client_guild:
                         # Switch voice channel if the voice channel we are using in the guild is not playing anything
                         # and if there is no voice client for the current song
                         if not self.is_audio_playing_or_paused(voice_client_guild) and not voice_client_song:
-                            music_channel = self.get_music_channel_for_guild(channel_song.guild)
+                            music_channel = self.get_music_channel_for_guild(channel_song.guild.id)
                             msg = f"> Switching to voice channel '{channel_song.name}'"
                             await music_channel.send(msg)
                             await voice_client_guild.disconnect()
@@ -272,7 +272,7 @@ class HansBot(commands.Bot):
         guild_ids = list(self.music_channels.keys())
         for guild_id in guild_ids:
             guild = self.get_guild(guild_id)
-            voice_client = self.get_voice_client_for_guild(guild)
+            voice_client = self.get_voice_client_for_guild(guild.id)
 
             if voice_client:  # if there is no voice client, we are not connected, so it doesn't make sense to add time
                 is_playing = self.is_audio_playing_or_paused(voice_client)
@@ -340,20 +340,14 @@ async def plæy(ctx):
     if message.author == bot.user:
         return
 
+    if command_is_valid(ctx):
+        return
+
     msg = message.content
     guild_id = message.guild.id
     voice_client = None
 
-    # Determine if this was posted in the guild's music channel and if user is in voice
-    if not bot.is_message_in_music_channel(message=ctx):
-        return
-
     music_channel_id = bot.music_channels.get(guild_id)
-
-    if not bot.is_user_in_correct_voice_channel(message=ctx):
-        logger.info(f"User is not in the correct voice channel.")
-        return
-
     channel_id_user = message.author.voice.channel.id
 
     _split = msg.split()
@@ -412,6 +406,7 @@ async def plæy(ctx):
 
 
 def command_is_valid(ctx):
+    # Determine if this was posted in the guild's music channel and if user is in voice
     user_is_in_voice = bot.is_user_in_correct_voice_channel(message=ctx)
     msg_in_music_channel = bot.is_message_in_music_channel(message=ctx)
 
@@ -433,11 +428,11 @@ async def skip(ctx):
 
     user_voice_channel = ctx.author.voice.channel
 
-    bot_voice_client = bot.get_voice_client_for_channel(user_voice_channel)
+    bot_voice_client = bot.get_voice_client_for_channel(user_voice_channel.id)
     if bot_voice_client:
         bot_voice_client.stop()
     else:
-        music_channel = bot.get_music_channel_for_guild(ctx.guild)
+        music_channel = bot.get_music_channel_for_guild(ctx.guild.id)
         msg = f"> I'm not playing anything in voice channel '{user_voice_channel}'."
         await music_channel.send(msg)
 
@@ -449,8 +444,8 @@ async def stop(ctx):
 
     # Clear the queue and stop playing audio
     user_voice_channel = bot.get_user_voice_channel(message=ctx)
-    is_playing = bot.is_playing_in_channel(user_voice_channel)
-    music_channel = bot.get_music_channel_for_guild(ctx.guild)
+    is_playing = bot.is_playing_in_channel(user_voice_channel.id)
+    music_channel = bot.get_music_channel_for_guild(ctx.guild.id)
 
     if is_playing and bot.is_message_in_music_channel(message=ctx):
         await bot.clear_queue(ctx.guild.id)
@@ -464,8 +459,8 @@ async def pause(ctx):
     if not command_is_valid(ctx):
         return
 
-    music_channel = bot.get_music_channel_for_guild(ctx.guild)
-    voice_client = bot.get_voice_client_for_guild(ctx.guild)
+    music_channel = bot.get_music_channel_for_guild(ctx.guild.id)
+    voice_client = bot.get_voice_client_for_guild(ctx.guild.id)
     if voice_client and voice_client.is_playing():
         voice_client.pause()
         msg = f"> Paused playback, use **!resume** to resume playback."
@@ -479,8 +474,8 @@ async def resume(ctx):
     if not command_is_valid(ctx):
         return
 
-    music_channel = bot.get_music_channel_for_guild(ctx.guild)
-    voice_client = bot.get_voice_client_for_guild(ctx.guild)
+    music_channel = bot.get_music_channel_for_guild(ctx.guild.id)
+    voice_client = bot.get_voice_client_for_guild(ctx.guild.id)
     if not voice_client:
         return
 
@@ -503,7 +498,7 @@ async def disconnect(ctx):
     if not command_is_valid(ctx):
         return
 
-    voice_client = bot.get_voice_client_for_guild(ctx.guild)
+    voice_client = bot.get_voice_client_for_guild(ctx.guild.id)
     if voice_client:
         await voice_client.disconnect()
         await bot.clear_queue(ctx.guild.id)
@@ -513,7 +508,7 @@ async def disconnect(ctx):
 async def queue(ctx):
     guild_queue = bot.get_queue(ctx.guild.id)
     readable_queue = []
-    music_channel = bot.get_music_channel_for_guild(ctx.guild)
+    music_channel = bot.get_music_channel_for_guild(ctx.guild.id)
     current_audio = bot.current_song.get(ctx.guild.id)
     if current_audio:
         title = current_audio["title"]
@@ -552,7 +547,7 @@ async def queue(ctx):
 
 @bot.command()
 async def playing(ctx):
-    music_channel = bot.get_music_channel_for_guild(ctx.guild)
+    music_channel = bot.get_music_channel_for_guild(ctx.guild.id)
     current_audio = bot.current_song.get(ctx.guild.id)
     if current_audio:
         title = current_audio["title"]
