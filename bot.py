@@ -340,7 +340,7 @@ async def plæy(ctx):
     if message.author == bot.user:
         return
 
-    if command_is_valid(ctx):
+    if not command_is_valid(ctx):
         return
 
     msg = message.content
