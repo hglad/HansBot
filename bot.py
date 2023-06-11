@@ -610,11 +610,6 @@ async def whomst(ctx):
     await music_channel.send(f'> {where}')
 
 
-# TODO if download is True in ydl.extract_info(), this might be a more stable way to play the audio, but might be an issue with larger files
-# song_path = str(song_info['title']) + "-" + str(song_info['id'] + ".mp3")
-# voice.play(discord.FFmpegPCMAudio(song_path), after=lambda x: end_song(path))
-# voice.source = discord.PCMVolumeTransformer(voice.source, 1)
-
 if __name__ == '__main__':
     bot.run(token, log_handler=handler, log_level=logging.INFO)
 
