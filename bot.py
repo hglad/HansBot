@@ -3,7 +3,7 @@ import json
 import os
 import logging
 import discord
-import youtube_dl
+import yt_dlp
 import threading
 
 from discord.ext import commands, tasks
@@ -30,21 +30,20 @@ logger.setLevel(level)
 token = os.getenv('DISCORD_TOKEN')
 TASK_INTERVAL = 3
 
+
 def my_hook(d):
     if d['status'] == 'finished':
         print('Done downloading, now converting ...')
 
 
 ydl_opts = {
-    'format': 'bestaudio/best',
+    'format': 'm4a/bestaudio/best',
     'postprocessors': [{
         'key': 'FFmpegExtractAudio',
-        'preferredcodec': 'mp3',
-        'preferredquality': '192',
+        'preferredcodec': 'm4a'
     }],
     'logger': logger,
-    'progress_hooks': [my_hook],
-    'outtmpl': 'audio_files/%(title)s-%(id)s.%(ext)s',
+    'progress_hooks': [my_hook]
 }
 
 ffmpeg_opts = {
@@ -89,6 +88,35 @@ class HansBot(commands.Bot):
 
         if self.play_queue.is_running() is False:
             self.play_queue.start()
+
+    async def add_playlist_to_queue(self, guild_id, playlist):
+        songs = playlist['songs']
+        playlist_title = playlist['title']
+        num_songs = len(songs)
+        msg = f"> Adding {num_songs} songs from playlist '{playlist_title}' to queue"
+        music_channel = self.get_channel(playlist['music_channel_id'])
+        await music_channel.send(msg)
+        for song in songs:
+            # TODO
+            title = song['title']
+            duration = song.get('duration')
+            audio_id = f"{title}-{song['id']}"
+
+            # url_to_play = song_info["formats"][0]["url"]
+            url_to_play = song["url"]
+
+            audio_source = discord.FFmpegPCMAudio(url_to_play, **ffmpeg_opts)
+
+            audio = {"url": url_to_play,
+                     "id": audio_id,
+                     "audio": audio_source,
+                     "voice_channel_id": playlist['voice_channel_id'],
+                     "music_channel_id": playlist['music_channel_id'],
+                     "title": title,
+                     "duration": duration,
+                     "requested_by": playlist['requested_by']}
+
+            await self.add_song_to_queue(guild_id, audio)
 
     async def remove_song_from_queue(self, guild_id, song):
         audio_id = song["id"]
@@ -278,7 +306,7 @@ class HansBot(commands.Bot):
                 is_playing = self.is_audio_playing_or_paused(voice_client)
                 if not is_playing:
                     self.idle_time[guild_id] += self.task_interval
-                    logger.debug(f"({guild.name}) Idle for {self.idle_time[guild_id]} seconds")
+                    # logger.debug(f"({guild.name}) Idle for {self.idle_time[guild_id]} seconds")
 
         # We should leave the voice channel if no-one else is in the channel and there is nothing to play,
         # or if we have been idle for a certain amount of time
@@ -286,7 +314,7 @@ class HansBot(commands.Bot):
             guild_id = connected_voice.guild.id
             channel = connected_voice.channel
             is_channel_empty = self.is_voice_channel_empty(channel)
-            is_playing = self.is_audio_playing_or_paused(voice_client)
+            is_playing = self.is_audio_playing_or_paused(connected_voice)
             is_queue_empty = True if not self.queue[guild_id] else False
 
             if not is_playing and is_queue_empty:
@@ -345,10 +373,9 @@ async def plæy(ctx):
 
     msg = message.content
     guild_id = message.guild.id
-    voice_client = None
 
     music_channel_id = bot.music_channels.get(guild_id)
-    channel_id_user = message.author.voice.channel.id
+    voice_channel_id_user = message.author.voice.channel.id
 
     _split = msg.split()
     if len(_split) > 0:
@@ -358,51 +385,46 @@ async def plæy(ctx):
         return
 
     try:
-        _ydl = youtube_dl.YoutubeDL(ydl_opts)
+        _ydl = yt_dlp.YoutubeDL(ydl_opts)
+        # TODO try with --flat-playlist in ydl_opts first, that way we can get the playlist info quicker instead of downloading everything in one go
         with _ydl as ydl:
             song_info = ydl.extract_info(url, download=False)
 
-        title = song_info['title']
-        duration = song_info.get('duration')
-        audio_id = f"{title}-{song_info['id']}"
-        url_to_play = song_info["formats"][0]["url"]
+        _type = song_info.get('_type')
 
-        audio_source = discord.FFmpegPCMAudio(url_to_play, **ffmpeg_opts)
+        if _type == 'playlist':
+            playlist = {'title': song_info['title'],
+                        'songs': song_info['entries'],
+                        'voice_channel_id': voice_channel_id_user,
+                        'music_channel_id': music_channel_id,
+                        "requested_by": message.author}
+            await bot.add_playlist_to_queue(guild_id, playlist)
+
+        else:  # just one song
+            song = song_info
+            title = song['title']
+            duration = song.get('duration')
+            audio_id = f"{title}-{song['id']}"
+
+            # url_to_play = song_info["formats"][0]["url"]
+            url_to_play = song["url"]
+
+            audio_source = discord.FFmpegPCMAudio(url_to_play, **ffmpeg_opts)
+
+            audio = {"url": url_to_play,
+                     "id": audio_id,
+                     "audio": audio_source,
+                     "voice_channel_id": voice_channel_id_user,
+                     "music_channel_id": music_channel_id,
+                     "title": title,
+                     "duration": duration,
+                     "requested_by": message.author}
+
+            await bot.add_song_to_queue(guild_id, audio)
 
     except BaseException as e:
-        logger.exception(f"Failed downloading from url '{url}': {e}")
+        logger.exception(f"Failed downloading or adding to queue using url '{url}': {e}")
         return
-
-    try:
-        # Join voice channel and play the downloaded audio
-        channel = bot.get_channel(channel_id_user)
-        if not bot.voice_clients:
-            voice_client = await channel.connect(timeout=60)
-        else:
-            # When the bot is in multiple voice channels, use the channel that is in the same guild as
-            # the guild that the message was sent form
-            for connected_voice in bot.voice_clients:
-                if connected_voice.guild.id == message.guild.id:
-                    voice_client = connected_voice
-                    break
-
-        if not voice_client:
-            logger.error(f"Unable to fetch voice client.")
-            return
-
-        audio = {"url": url_to_play,
-                 "id": audio_id,
-                 "audio": audio_source,
-                 "voice_channel_id": channel_id_user,
-                 "music_channel_id": music_channel_id,
-                 "title": title,
-                 "duration": duration,
-                 "requested_by": message.author}
-
-        await bot.add_song_to_queue(guild_id, audio)
-
-    except BaseException as e:
-        logger.exception(f"Failed joining channel or playing audio: {e}")
 
 
 def command_is_valid(ctx):
@@ -525,6 +547,7 @@ async def queue(ctx):
         readable_queue.append(playing_element)
 
     readable_queue.append(f"## **Queue:**\n")
+
     for i, audio in enumerate(guild_queue):
         pos = i + 1
         if audio.get('duration'):
@@ -542,7 +565,13 @@ async def queue(ctx):
     else:
         msg = ">>> %s" % '\n'.join(readable_queue)
 
-    await music_channel.send(msg)
+    try:
+        await music_channel.send(msg)
+    except discord.errors.HTTPException as e:
+        # The message is too long, truncate it to show first 5 and last 5 songs in the queue
+        truncated_queue = readable_queue[0:7] + ['......\n'] + readable_queue[-5:]
+        msg = ">>> %s" % '\n'.join(truncated_queue)
+        await music_channel.send(msg)
 
 
 @bot.command()
@@ -577,11 +606,6 @@ async def whomst(ctx):
     where = os.environ.get('WHERE', 'unknown')
     await music_channel.send(f'> {where}')
 
-
-# TODO if download is True in ydl.extract_info(), this might be a more stable way to play the audio, but might be an issue with larger files
-# song_path = str(song_info['title']) + "-" + str(song_info['id'] + ".mp3")
-# voice.play(discord.FFmpegPCMAudio(song_path), after=lambda x: end_song(path))
-# voice.source = discord.PCMVolumeTransformer(voice.source, 1)
 
 if __name__ == '__main__':
     bot.run(token, log_handler=handler, log_level=logging.INFO)
