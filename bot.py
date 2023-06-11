@@ -30,21 +30,20 @@ logger.setLevel(level)
 token = os.getenv('DISCORD_TOKEN')
 TASK_INTERVAL = 3
 
+
 def my_hook(d):
     if d['status'] == 'finished':
         print('Done downloading, now converting ...')
 
 
 ydl_opts = {
-    'format': 'bestaudio/best',
+    'format': 'm4a/bestaudio/best',
     'postprocessors': [{
         'key': 'FFmpegExtractAudio',
-        'preferredcodec': 'mp3',
-        'preferredquality': '192',
+        'preferredcodec': 'm4a'
     }],
     'logger': logger,
-    'progress_hooks': [my_hook],
-    'outtmpl': 'audio_files/%(title)s-%(id)s.%(ext)s',
+    'progress_hooks': [my_hook]
 }
 
 ffmpeg_opts = {
@@ -92,10 +91,9 @@ class HansBot(commands.Bot):
 
     async def add_playlist_to_queue(self, guild_id, playlist):
         songs = playlist['songs']
-        title = playlist['title']
+        playlist_title = playlist['title']
         num_songs = len(songs)
-        num_in_queue = len(self.queue[guild_id])
-        logger.info(f"> Adding {num_songs} songs from playlist '{title}' to queue")
+        logger.info(f"> Adding {num_songs} songs from playlist '{playlist_title}' to queue")
 
         for song in songs:
             # TODO
@@ -111,22 +109,24 @@ class HansBot(commands.Bot):
             audio = {"url": url_to_play,
                      "id": audio_id,
                      "audio": audio_source,
-                     "voice_channel_id": channel_id_user,
-                     "music_channel_id": music_channel_id,
+                     "voice_channel_id": playlist['voice_channel_id'],
+                     "music_channel_id": playlist['music_channel_id'],
                      "title": title,
                      "duration": duration,
-                     "requested_by": message.author}
+                     "requested_by": playlist['requested_by']}
 
             await bot.add_song_to_queue(guild_id, audio)
 
-            self.queue[guild_id].append(song)
-
-            msg = f"> Added **{title}** to the queue (number #{num_in_queue + 1} in queue)"
-            music_channel = self.get_channel(song['music_channel_id'])
-            await music_channel.send(msg)
-
-            if self.play_queue.is_running() is False:
-                self.play_queue.start()
+            # self.queue[guild_id].append(song)
+            #
+            # msg = f"> Added **{title}** to the queue (number #{num_in_queue + 1} in queue)"
+            # music_channel = self.get_channel(song['music_channel_id'])
+            # await music_channel.send(msg)
+            #
+            # num_in_queue += 1
+            #
+            # if self.play_queue.is_running() is False:
+            #     self.play_queue.start()
 
     async def remove_song_from_queue(self, guild_id, song):
         audio_id = song["id"]
@@ -386,7 +386,7 @@ async def plæy(ctx):
     voice_client = None
 
     music_channel_id = bot.music_channels.get(guild_id)
-    channel_id_user = message.author.voice.channel.id
+    voice_channel_id_user = message.author.voice.channel.id
 
     _split = msg.split()
     if len(_split) > 0:
@@ -404,7 +404,10 @@ async def plæy(ctx):
 
         if _type == 'playlist':
             playlist = {'title': song_info['title'],
-                        'songs': song_info['entries']}
+                        'songs': song_info['entries'],
+                        'voice_channel_id': voice_channel_id_user,
+                        'music_channel_id': music_channel_id,
+                        "requested_by": message.author}
             await bot.add_playlist_to_queue(guild_id, playlist)
 
         else:  # just one song
@@ -421,7 +424,7 @@ async def plæy(ctx):
             audio = {"url": url_to_play,
                      "id": audio_id,
                      "audio": audio_source,
-                     "voice_channel_id": channel_id_user,
+                     "voice_channel_id": voice_channel_id_user,
                      "music_channel_id": music_channel_id,
                      "title": title,
                      "duration": duration,
