@@ -93,8 +93,9 @@ class HansBot(commands.Bot):
         songs = playlist['songs']
         playlist_title = playlist['title']
         num_songs = len(songs)
-        logger.info(f"> Adding {num_songs} songs from playlist '{playlist_title}' to queue")
-
+        msg = f"> Adding {num_songs} songs from playlist '{playlist_title}' to queue"
+        music_channel = self.get_channel(playlist['music_channel_id'])
+        await music_channel.send(msg)
         for song in songs:
             # TODO
             title = song['title']
@@ -116,17 +117,6 @@ class HansBot(commands.Bot):
                      "requested_by": playlist['requested_by']}
 
             await self.add_song_to_queue(guild_id, audio)
-
-            # self.queue[guild_id].append(song)
-            #
-            # msg = f"> Added **{title}** to the queue (number #{num_in_queue + 1} in queue)"
-            # music_channel = self.get_channel(song['music_channel_id'])
-            # await music_channel.send(msg)
-            #
-            # num_in_queue += 1
-            #
-            # if self.play_queue.is_running() is False:
-            #     self.play_queue.start()
 
     async def remove_song_from_queue(self, guild_id, song):
         audio_id = song["id"]
@@ -383,7 +373,6 @@ async def plæy(ctx):
 
     msg = message.content
     guild_id = message.guild.id
-    voice_client = None
 
     music_channel_id = bot.music_channels.get(guild_id)
     voice_channel_id_user = message.author.voice.channel.id
@@ -397,6 +386,7 @@ async def plæy(ctx):
 
     try:
         _ydl = yt_dlp.YoutubeDL(ydl_opts)
+        # TODO try with --flat-playlist in ydl_opts first, that way we can get the playlist info quicker instead of downloading everything in one go
         with _ydl as ydl:
             song_info = ydl.extract_info(url, download=False)
 
@@ -557,6 +547,7 @@ async def queue(ctx):
         readable_queue.append(playing_element)
 
     readable_queue.append(f"## **Queue:**\n")
+
     for i, audio in enumerate(guild_queue):
         pos = i + 1
         if audio.get('duration'):
@@ -574,7 +565,13 @@ async def queue(ctx):
     else:
         msg = ">>> %s" % '\n'.join(readable_queue)
 
-    await music_channel.send(msg)
+    try:
+        await music_channel.send(msg)
+    except discord.errors.HTTPException as e:
+        # The message is too long, truncate it to show first 5 and last 5 songs in the queue
+        truncated_queue = readable_queue[0:7] + ['......\n'] + readable_queue[-5:]
+        msg = ">>> %s" % '\n'.join(truncated_queue)
+        await music_channel.send(msg)
 
 
 @bot.command()
