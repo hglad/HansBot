@@ -115,7 +115,7 @@ class HansBot(commands.Bot):
                      "duration": duration,
                      "requested_by": playlist['requested_by']}
 
-            await bot.add_song_to_queue(guild_id, audio)
+            await self.add_song_to_queue(guild_id, audio)
 
             # self.queue[guild_id].append(song)
             #
