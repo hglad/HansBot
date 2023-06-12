@@ -43,8 +43,20 @@ ydl_opts = {
         'preferredcodec': 'm4a'
     }],
     'logger': logger,
+    'progress_hooks': [my_hook],
+    'extract_flat': True
+}
+
+ydl_opts_playlist = {
+    'format': 'm4a/bestaudio/best',
+    'postprocessors': [{
+        'key': 'FFmpegExtractAudio',
+        'preferredcodec': 'm4a'
+    }],
+    'logger': logger,
     'progress_hooks': [my_hook]
 }
+
 
 ffmpeg_opts = {
         'options': '-vn -http_persistent 0',
@@ -91,18 +103,10 @@ class HansBot(commands.Bot):
 
     async def add_playlist_to_queue(self, guild_id, playlist):
         songs = playlist['songs']
-        playlist_title = playlist['title']
-        num_songs = len(songs)
-        msg = f"> Adding {num_songs} songs from playlist '{playlist_title}' to queue"
-        music_channel = self.get_channel(playlist['music_channel_id'])
-        await music_channel.send(msg)
         for song in songs:
-            # TODO
             title = song['title']
             duration = song.get('duration')
             audio_id = f"{title}-{song['id']}"
-
-            # url_to_play = song_info["formats"][0]["url"]
             url_to_play = song["url"]
 
             audio_source = discord.FFmpegPCMAudio(url_to_play, **ffmpeg_opts)
@@ -247,8 +251,9 @@ class HansBot(commands.Bot):
                     if not self.is_audio_playing_or_paused(voice_client):
                         self.current_song[guild_id] = None
 
-                for song in guild_queue:
-                    # TODO should we loop through all the songs here?
+                # for song in guild_queue:
+                if len(guild_queue) > 0:
+                    song = guild_queue[0]
                     channel_song_id = song["voice_channel_id"]
                     channel_song = self.get_channel(channel_song_id)
                     voice_client_song = self.get_voice_client_for_channel(channel_song_id)
@@ -385,15 +390,27 @@ async def plæy(ctx):
         return
 
     try:
-        _ydl = yt_dlp.YoutubeDL(ydl_opts)
-        # TODO try with --flat-playlist in ydl_opts first, that way we can get the playlist info quicker instead of downloading everything in one go
-        with _ydl as ydl:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             song_info = ydl.extract_info(url, download=False)
 
         _type = song_info.get('_type')
-
         if _type == 'playlist':
-            playlist = {'title': song_info['title'],
+            playlist_title = song_info['title']
+            num_songs = len(song_info['entries'])
+            msg = f"> Adding {num_songs} songs from playlist **{playlist_title}** to queue"
+            music_channel = bot.get_channel(music_channel_id)
+            await music_channel.send(msg)
+
+            voice_client = bot.get_voice_client_for_guild(guild_id)
+            if not voice_client:
+                channel = bot.get_channel(voice_channel_id_user)
+                await channel.connect(timeout=60)
+
+            # We need to extract info again, with options that fetch all videos in the playlist
+            with yt_dlp.YoutubeDL(ydl_opts_playlist) as ydl:
+                song_info = ydl.extract_info(url, download=False)
+
+            playlist = {'title': playlist_title,
                         'songs': song_info['entries'],
                         'voice_channel_id': voice_channel_id_user,
                         'music_channel_id': music_channel_id,
@@ -405,8 +422,6 @@ async def plæy(ctx):
             title = song['title']
             duration = song.get('duration')
             audio_id = f"{title}-{song['id']}"
-
-            # url_to_play = song_info["formats"][0]["url"]
             url_to_play = song["url"]
 
             audio_source = discord.FFmpegPCMAudio(url_to_play, **ffmpeg_opts)
@@ -567,7 +582,7 @@ async def queue(ctx):
 
     try:
         await music_channel.send(msg)
-    except discord.errors.HTTPException as e:
+    except discord.errors.HTTPException:
         # The message is too long, truncate it to show first 5 and last 5 songs in the queue
         truncated_queue = readable_queue[0:7] + ['......\n'] + readable_queue[-5:]
         msg = ">>> %s" % '\n'.join(truncated_queue)
