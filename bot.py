@@ -44,7 +44,8 @@ ydl_opts = {
     }],
     'logger': logger,
     'progress_hooks': [my_hook],
-    'extract_flat': True
+    'extract_flat': True,
+    'rm_cachedir': True
 }
 
 ydl_opts_playlist = {
@@ -54,7 +55,8 @@ ydl_opts_playlist = {
         'preferredcodec': 'm4a'
     }],
     'logger': logger,
-    'progress_hooks': [my_hook]
+    'progress_hooks': [my_hook],
+    'rm_cachedir': True
 }
 
 
