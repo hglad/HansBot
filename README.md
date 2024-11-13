@@ -1,5 +1,4 @@
-# An music bot
-One of the Discord music bots of all time
+This is a Discord bot that supports audio streaming. WIP.
 
 ### Building and running the image
 Make sure you are in the same folder as the Dockerfile.
