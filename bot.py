@@ -61,7 +61,7 @@ ydl_opts_playlist = {
 
 
 ffmpeg_opts = {
-        'options': '-vn -http_persistent 0',
+        'options': '-vn -http_persistent 0 -c:a libopus',
         'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5'
     }
 
