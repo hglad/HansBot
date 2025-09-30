@@ -37,10 +37,11 @@ def my_hook(d):
 
 
 ydl_opts = {
-    'format': 'm4a/bestaudio/best',
+    # 'format': 'm4a/bestaudio/best',
     'postprocessors': [{
         'key': 'FFmpegExtractAudio',
-        'preferredcodec': 'm4a'
+        'preferredcodec': 'mp3',
+        'preferredquality': '320',
     }],
     'logger': logger,
     'progress_hooks': [my_hook],
@@ -49,10 +50,11 @@ ydl_opts = {
 }
 
 ydl_opts_playlist = {
-    'format': 'm4a/bestaudio/best',
+    # 'format': 'm4a/bestaudio/best',
     'postprocessors': [{
         'key': 'FFmpegExtractAudio',
-        'preferredcodec': 'm4a'
+        'preferredcodec': 'mp3',
+        'preferredquality': '320',
     }],
     'logger': logger,
     'progress_hooks': [my_hook],
@@ -61,7 +63,7 @@ ydl_opts_playlist = {
 
 
 ffmpeg_opts = {
-        'options': '-vn -http_persistent 0 -c:a libopus -b:a 128k',
+        'options': '-vn -http_persistent 0',
         'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5'
     }
 
