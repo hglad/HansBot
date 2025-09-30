@@ -37,7 +37,7 @@ def my_hook(d):
 
 
 ydl_opts = {
-    # 'format': 'm4a/bestaudio/best',
+    'format': 'mp3/bestaudio/best',
     'postprocessors': [{
         'key': 'FFmpegExtractAudio',
         'preferredcodec': 'mp3',
@@ -50,7 +50,7 @@ ydl_opts = {
 }
 
 ydl_opts_playlist = {
-    # 'format': 'm4a/bestaudio/best',
+    'format': 'mp3/bestaudio/best',
     'postprocessors': [{
         'key': 'FFmpegExtractAudio',
         'preferredcodec': 'mp3',
@@ -95,7 +95,7 @@ class HansBot(commands.Bot):
     async def add_song_to_queue(self, guild_id, song):
         num_in_queue = len(self.queue[guild_id])
         title = song['title']
-
+        logger.info(f"Added {song} to queue")
         self.queue[guild_id].append(song)
         logger.info(f"> Added '{title}' to queue")
         msg = f"> Added **{title}** to the queue (number #{num_in_queue + 1} in queue)"
@@ -114,7 +114,6 @@ class HansBot(commands.Bot):
             url_to_play = song["url"]
 
             audio_source = discord.FFmpegPCMAudio(url_to_play, **ffmpeg_opts)
-
             audio = {"url": url_to_play,
                      "id": audio_id,
                      "audio": audio_source,
