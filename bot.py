@@ -37,12 +37,12 @@ def my_hook(d):
 
 
 ydl_opts = {
-    'format': 'mp3/bestaudio/best',
-    'postprocessors': [{
-        'key': 'FFmpegExtractAudio',
-        'preferredcodec': 'mp3',
-        'preferredquality': '320',
-    }],
+    'format': 'bestaudio',
+    # 'postprocessors': [{
+    #     'key': 'FFmpegExtractAudio',
+    #     'preferredcodec': 'mp3',
+    #     'preferredquality': '320',
+    # }],
     'logger': logger,
     'progress_hooks': [my_hook],
     'extract_flat': True,
@@ -50,12 +50,12 @@ ydl_opts = {
 }
 
 ydl_opts_playlist = {
-    'format': 'mp3/bestaudio/best',
-    'postprocessors': [{
-        'key': 'FFmpegExtractAudio',
-        'preferredcodec': 'mp3',
-        'preferredquality': '320',
-    }],
+    'format': 'bestaudio',
+    # 'postprocessors': [{
+    #     'key': 'FFmpegExtractAudio',
+    #     'preferredcodec': 'mp3',
+    #     'preferredquality': '320',
+    # }],
     'logger': logger,
     'progress_hooks': [my_hook],
     'rm_cachedir': True
@@ -63,8 +63,8 @@ ydl_opts_playlist = {
 
 
 ffmpeg_opts = {
-        'options': '-vn -http_persistent 0',
-        'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5'
+        'options': '-vn',
+        'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -reconnect_at_eof 1'
     }
 
 
@@ -113,7 +113,7 @@ class HansBot(commands.Bot):
             audio_id = f"{title}-{song['id']}"
             url_to_play = song["url"]
 
-            audio_source = discord.FFmpegPCMAudio(url_to_play, **ffmpeg_opts)
+            audio_source = discord.FFmpegOpusAudio(url_to_play, **ffmpeg_opts)
             audio = {"url": url_to_play,
                      "id": audio_id,
                      "audio": audio_source,
