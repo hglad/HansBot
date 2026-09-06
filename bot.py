@@ -2,11 +2,13 @@ import asyncio
 import json
 import os
 import logging
+import shlex
 import discord
 import yt_dlp
 import threading
 
 from discord.ext import commands, tasks
+from typing import Any, cast
 
 
 # Set up logging
@@ -29,6 +31,7 @@ logger.setLevel(level)
 
 token = os.getenv('DISCORD_TOKEN')
 TASK_INTERVAL = 3
+MAX_PLAYLIST_SONGS = 10
 
 
 def my_hook(d):
@@ -46,6 +49,8 @@ ydl_opts = {
     'logger': logger,
     'progress_hooks': [my_hook],
     'extract_flat': True,
+    'playlistend': MAX_PLAYLIST_SONGS,
+    'remote_components': {'ejs:npm'},
     'rm_cachedir': True
 }
 
@@ -58,14 +63,27 @@ ydl_opts_playlist = {
     # }],
     'logger': logger,
     'progress_hooks': [my_hook],
+    'playlistend': MAX_PLAYLIST_SONGS,
+    'remote_components': {'ejs:npm'},
     'rm_cachedir': True
 }
 
 
-ffmpeg_opts = {
+def get_ffmpeg_opts(http_headers=None):
+    before_options = '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -reconnect_at_eof 1'
+    if http_headers:
+        headers = ''.join(f'{name}: {value}\r\n' for name, value in http_headers.items())
+        before_options += f' -headers {shlex.quote(headers)}'
+
+    return {
         'options': '-vn',
-        'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -reconnect_at_eof 1'
+        'before_options': before_options
     }
+
+
+def extract_song_info(url):
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        return cast(dict[str, Any], ydl.extract_info(url, download=False))
 
 
 class HansBot(commands.Bot):
@@ -106,17 +124,16 @@ class HansBot(commands.Bot):
             self.play_queue.start()
 
     async def add_playlist_to_queue(self, guild_id, playlist):
-        songs = playlist['songs']
+        songs = playlist['songs'][:MAX_PLAYLIST_SONGS]
         for song in songs:
             title = song['title']
             duration = song.get('duration')
             audio_id = f"{title}-{song['id']}"
-            url_to_play = song["url"]
+            source_url = song.get('webpage_url') or song.get('original_url') or song['url']
 
-            audio_source = discord.FFmpegOpusAudio(url_to_play, **ffmpeg_opts)
-            audio = {"url": url_to_play,
+            audio = {"source_url": source_url,
                      "id": audio_id,
-                     "audio": audio_source,
+                     "audio_type": "opus",
                      "voice_channel_id": playlist['voice_channel_id'],
                      "music_channel_id": playlist['music_channel_id'],
                      "title": title,
@@ -124,6 +141,15 @@ class HansBot(commands.Bot):
                      "requested_by": playlist['requested_by']}
 
             await self.add_song_to_queue(guild_id, audio)
+
+    async def create_audio_source(self, song):
+        song_info = await asyncio.to_thread(extract_song_info, song["source_url"])
+        ffmpeg_options = get_ffmpeg_opts(song_info.get("http_headers"))
+        audio_type = song.get("audio_type", "pcm")
+
+        if audio_type == "opus":
+            return discord.FFmpegOpusAudio(song_info["url"], **ffmpeg_options)
+        return discord.FFmpegPCMAudio(song_info["url"], **ffmpeg_options)
 
     async def remove_song_from_queue(self, guild_id, song):
         audio_id = song["id"]
@@ -281,11 +307,18 @@ class HansBot(commands.Bot):
                         voice_client = await channel_song.connect(timeout=60)
 
                     if not self.is_audio_playing_or_paused(voice_client_guild):
-                        audio_to_play = song["audio"]
                         title = song["title"]
 
                         # Play the audio and post a helpful message
                         music_channel = self.get_channel(song["music_channel_id"])
+                        try:
+                            audio_to_play = await self.create_audio_source(song)
+                        except Exception as e:
+                            logger.exception(f"Failed creating audio source for '{title}': {e}")
+                            await music_channel.send(f"> Failed to play **{title}**; removing it from the queue.")
+                            await self.remove_song_from_queue(guild_id, song)
+                            continue
+
                         msg = f"> ## **Now playing:**\n"
                         if song.get('duration'):
                             duration_fmt = self.seconds_to_mm_ss(song["duration"])
@@ -394,7 +427,7 @@ async def plæy(ctx):
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            song_info = ydl.extract_info(url, download=False)
+            song_info = cast(dict[str, Any], ydl.extract_info(url, download=False))
 
         _type = song_info.get('_type')
         if _type == 'playlist':
@@ -411,10 +444,10 @@ async def plæy(ctx):
 
             # We need to extract info again, with options that fetch all videos in the playlist
             with yt_dlp.YoutubeDL(ydl_opts_playlist) as ydl:
-                song_info = ydl.extract_info(url, download=False)
+                song_info = cast(dict[str, Any], ydl.extract_info(url, download=False))
 
             playlist = {'title': playlist_title,
-                        'songs': song_info['entries'],
+                        'songs': song_info['entries'][:MAX_PLAYLIST_SONGS],
                         'voice_channel_id': voice_channel_id_user,
                         'music_channel_id': music_channel_id,
                         "requested_by": message.author}
@@ -425,13 +458,10 @@ async def plæy(ctx):
             title = song['title']
             duration = song.get('duration')
             audio_id = f"{title}-{song['id']}"
-            url_to_play = song["url"]
 
-            audio_source = discord.FFmpegPCMAudio(url_to_play, **ffmpeg_opts)
-
-            audio = {"url": url_to_play,
+            audio = {"source_url": song.get('webpage_url') or url,
                      "id": audio_id,
-                     "audio": audio_source,
+                     "audio_type": "pcm",
                      "voice_channel_id": voice_channel_id_user,
                      "music_channel_id": music_channel_id,
                      "title": title,
@@ -627,5 +657,3 @@ async def whomst(ctx):
 
 if __name__ == '__main__':
     bot.run(token, log_handler=handler, log_level=logging.INFO)
-
-
